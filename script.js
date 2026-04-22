@@ -1,451 +1,795 @@
-// ── STATE ─────────────────────────────────────────────────────────────────
+/* ══════════════════════════════════════════════════════════════════════════
+   EmailFilter — Dashboard Script
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── STATE ─────────────────────────────────────────────────────────────── */
 const state = {
-  files:    [],   // [{name, size, text}]
-  results:  [],   // [{email, domain, formatOk, mxOk, status, reason}]
-  filtered: [],
-  filter:   'all',
-  search:   '',
-  page:     1,
+  files:   [],     // [{name, size, text}]
+  emails:  [],     // [{email, domain, formatOk, formatReason, mxOk, mxReason, status}]
+  filter:  'all',
+  search:  '',
+  page:    1,
+  running: false,
+  tab:     'upload',
 };
+
 const PER_PAGE = 50;
-const mxCache  = new Map();
-let   activeTab = 'upload';
+const BATCH    = 8;
+const MX_TO    = 5000;
+const C        = 326.73;   // 2π × r=52
 
-// ── TAB SWITCH ────────────────────────────────────────────────────────────
-function switchTab(tab) {
-  activeTab = tab;
-  document.getElementById('uploadPanel').style.display = tab === 'upload' ? '' : 'none';
-  document.getElementById('pastePanel').style.display  = tab === 'paste'  ? '' : 'none';
-  document.querySelectorAll('#inputTabs .tab').forEach((t, i) =>
-    t.classList.toggle('active', i === (tab === 'upload' ? 0 : 1)));
-}
+const mxCache  = new Map(); // domain → {ok, reason}
 
-// ── DRAG & DROP ───────────────────────────────────────────────────────────
-function onDragOver(e)  { e.preventDefault(); document.getElementById('dropZone').classList.add('dragover'); }
-function onDragLeave()  { document.getElementById('dropZone').classList.remove('dragover'); }
-function onDrop(e) {
-  e.preventDefault();
-  document.getElementById('dropZone').classList.remove('dragover');
-  [...e.dataTransfer.files].forEach(loadFile);
-}
-function handleFileSelect(inp) { [...inp.files].forEach(loadFile); inp.value = ''; }
-
-async function loadFile(file) {
-  if (state.files.find(f => f.name === file.name && f.size === file.size)) return;
-  const ext = file.name.split('.').pop().toLowerCase();
-  let text = '';
-  try {
-    if (ext === 'xlsx' || ext === 'xls') {
-      const buf = await file.arrayBuffer();
-      const wb  = XLSX.read(buf, { type: 'array' });
-      wb.SheetNames.forEach(n => { text += XLSX.utils.sheet_to_csv(wb.Sheets[n]) + '\n'; });
-    } else {
-      text = await file.text();
-    }
-    state.files.push({ name: file.name, size: file.size, text });
-    renderFileChips();
-    hideAlert();
-  } catch (err) {
-    showAlert('Could not read file: ' + file.name);
+/* ── SIDEBAR / NAV ─────────────────────────────────────────────────────── */
+function toggleSidebar() {
+  const app      = document.querySelector('.app');
+  const isMobile = window.innerWidth <= 960;
+  if (isMobile) {
+    app.classList.toggle('sb-open');
+  } else {
+    app.classList.toggle('sb-collapsed');
   }
 }
 
-function removeFile(idx) {
-  state.files.splice(idx, 1);
-  renderFileChips();
+function navClick(section) {
+  document.querySelectorAll('.sb-item[id^="nav-"]').forEach(function(el) {
+    el.classList.remove('active');
+  });
+  var btn = document.getElementById('nav-' + section);
+  if (btn) btn.classList.add('active');
+
+  var target = document.getElementById('section-' + section);
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  if (window.innerWidth <= 960) {
+    document.querySelector('.app').classList.remove('sb-open');
+  }
 }
 
-function renderFileChips() {
-  const wrap = document.getElementById('fileChips');
-  wrap.innerHTML = state.files.map((f, i) => `
-    <div class="file-chip">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-      </svg>
-      ${escHtml(f.name)}
-      <span class="chip-size">(${(f.size / 1024).toFixed(1)} KB)</span>
-      <button class="chip-remove" onclick="removeFile(${i})" title="Remove">✕</button>
-    </div>
-  `).join('');
-}
-
-// ── PASTE ─────────────────────────────────────────────────────────────────
-document.getElementById('pasteArea').addEventListener('input', function () {
-  document.getElementById('pasteCount').textContent =
-    this.value.length.toLocaleString() + ' characters';
+/* close mobile sidebar overlay when clicking outside */
+document.addEventListener('click', function(e) {
+  if (window.innerWidth > 960) return;
+  var app = document.querySelector('.app');
+  if (!app.classList.contains('sb-open')) return;
+  var sidebar = document.getElementById('sidebar');
+  if (!sidebar.contains(e.target) && !e.target.closest('.sb-toggle')) {
+    app.classList.remove('sb-open');
+  }
 });
+
+/* ── INPUT TABS ────────────────────────────────────────────────────────── */
+function switchTab(tab) {
+  state.tab = tab;
+  var tabs = document.querySelectorAll('#inputTabs .tab');
+  tabs[0].classList.toggle('active', tab === 'upload');
+  tabs[1].classList.toggle('active', tab === 'paste');
+  document.getElementById('uploadPanel').style.display = tab === 'upload' ? '' : 'none';
+  document.getElementById('pastePanel').style.display  = tab === 'paste'  ? '' : 'none';
+}
+
 function clearPaste() {
   document.getElementById('pasteArea').value = '';
   document.getElementById('pasteCount').textContent = '0 characters';
 }
 
-// ── EMAIL EXTRACTION ──────────────────────────────────────────────────────
-function extractEmails(text) {
-  const raw = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
-  return [...new Set(raw.map(e => e.toLowerCase()))];
+document.getElementById('pasteArea').addEventListener('input', function() {
+  var n = this.value.length;
+  document.getElementById('pasteCount').textContent =
+    n.toLocaleString() + ' character' + (n === 1 ? '' : 's');
+});
+
+/* ── FILE LOADING ──────────────────────────────────────────────────────── */
+function onDragOver(e)  { e.preventDefault(); document.getElementById('dropZone').classList.add('dragover'); }
+function onDragLeave()  { document.getElementById('dropZone').classList.remove('dragover'); }
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.remove('dragover');
+  Array.prototype.forEach.call(e.dataTransfer.files, loadFile);
 }
 
-// ── FORMAT VALIDATION (with specific reasons) ─────────────────────────────
-function validateFormat(email) {
-  if (email.length > 254)      return { ok: false, reason: 'Email too long' };
-  const at = email.lastIndexOf('@');
-  if (at < 1)                  return { ok: false, reason: 'Missing @ symbol' };
-  const local  = email.slice(0, at);
-  const domain = email.slice(at + 1);
-  if (local.length > 64)       return { ok: false, reason: 'Local part too long' };
-  if (local.startsWith('.'))   return { ok: false, reason: 'Starts with a dot' };
-  if (local.endsWith('.'))     return { ok: false, reason: 'Ends with a dot' };
-  if (local.includes('..'))    return { ok: false, reason: 'Double dot in address' };
-  if (!domain.includes('.'))   return { ok: false, reason: 'Invalid domain' };
-  const re = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
-  if (!re.test(email))         return { ok: false, reason: 'Invalid format' };
-  return { ok: true, reason: '' };
+function handleFileSelect(input) {
+  Array.prototype.forEach.call(input.files, loadFile);
+  input.value = '';
 }
 
-// ── DNS / MX CHECK ────────────────────────────────────────────────────────
-async function checkMX(domain) {
-  if (mxCache.has(domain)) return mxCache.get(domain);
-  try {
-    const ctrl  = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 5000);
-    const res   = await fetch(
-      `https://dns.google/resolve?name=${encodeURIComponent(domain)}&type=MX`,
-      { signal: ctrl.signal }
-    );
-    clearTimeout(timer);
-    const data = await res.json();
-    const ok   = data.Status === 0 && Array.isArray(data.Answer) && data.Answer.length > 0;
-    mxCache.set(domain, ok);
-    return ok;
-  } catch {
-    mxCache.set(domain, null);
-    return null;
-  }
-}
-
-async function batchCheck(domains, onProg) {
-  const BATCH = 8;
-  const arr   = [...domains];
-  const map   = new Map();
-  for (let i = 0; i < arr.length; i += BATCH) {
-    const slice = arr.slice(i, i + BATCH);
-    // Show first domain in batch as "currently checking"
-    onProg(i, arr.length, slice[0]);
-    await raf();
-    const res = await Promise.all(slice.map(checkMX));
-    slice.forEach((d, j) => map.set(d, res[j]));
-    onProg(Math.min(i + BATCH, arr.length), arr.length, slice[slice.length - 1]);
-    await raf();
-  }
-  return map;
-}
-
-// ── MAIN VALIDATION FLOW ──────────────────────────────────────────────────
-async function startValidation() {
-  let raw = '';
-  if (activeTab === 'upload') {
-    if (!state.files.length) { showAlert('No files loaded. Upload at least one file first.'); return; }
-    raw = state.files.map(f => f.text).join('\n');
+function loadFile(file) {
+  var ext = file.name.split('.').pop().toLowerCase();
+  if (ext === 'xlsx' || ext === 'xls') {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        var wb   = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+        var text = '';
+        wb.SheetNames.forEach(function(name) {
+          text += XLSX.utils.sheet_to_csv(wb.Sheets[name]) + '\n';
+        });
+        addFile(file.name, file.size, text);
+      } catch(err) {
+        showToast('\u274c Failed to read ' + file.name);
+      }
+    };
+    reader.readAsArrayBuffer(file);
   } else {
-    raw = document.getElementById('pasteArea').value;
+    var reader2 = new FileReader();
+    reader2.onload = function(e) { addFile(file.name, file.size, e.target.result); };
+    reader2.readAsText(file);
   }
-  if (!raw.trim()) { showAlert('Input is empty.'); return; }
+}
 
-  hideAlert();
-  setBtn(true);
-  showProgress();
-  setStep(1);
-  setPct(5, 'Scanning text for email addresses…');
-  await raf();
-
-  // ── Step 1: Extract
-  const emails = extractEmails(raw);
-  if (!emails.length) {
-    hideProgress(); setBtn(false);
-    showAlert('No email addresses found in the input.');
+function addFile(name, size, text) {
+  if (state.files.some(function(f) { return f.name === name; })) {
+    showToast('\u26a0\ufe0f ' + name + ' already added');
     return;
   }
-  setMini(emails.length, 0, 0);
-  setPct(18, `Found ${emails.length.toLocaleString()} email${emails.length > 1 ? 's' : ''}. Checking format…`);
-  setStep(2);
-  await raf();
+  state.files.push({ name: name, size: size, text: text });
+  renderChips();
+}
 
-  // ── Step 2: Format validation
-  const fmt = [];
-  for (let i = 0; i < emails.length; i++) {
-    const e   = emails[i];
-    const res = validateFormat(e);
-    fmt.push({ email: e, domain: e.split('@')[1], formatOk: res.ok, fmtReason: res.reason });
-    if (i % 50 === 0 || i === emails.length - 1) {
-      const pct = 18 + Math.round((i / emails.length) * 12);
-      setPct(pct, `Format check: ${(i + 1).toLocaleString()} / ${emails.length.toLocaleString()}`);
-      await raf();
-    }
-  }
+function removeFile(idx) {
+  state.files.splice(idx, 1);
+  renderChips();
+}
 
-  const formatInvalid = fmt.filter(r => !r.formatOk).length;
-  setMini(emails.length, 0, formatInvalid);
-  await raf();
-
-  // ── Step 3: DNS / MX check
-  const domains = new Set(fmt.filter(r => r.formatOk).map(r => r.domain));
-  setStep(3);
-  setLive('Starting DNS lookup…');
-  setPct(30, `Checking MX records for ${domains.size} domain${domains.size !== 1 ? 's' : ''}…`);
-  await raf();
-
-  const mxMap = await batchCheck(domains, (done, total, domain) => {
-    const pct = 30 + Math.round((done / total) * 62);
-    setPct(pct, `DNS / MX check: ${done} / ${total} domains`);
-    setLive(`Checking: ${domain}`);
-
-    // Running valid/invalid count using cache so far
-    let v = 0, inv = formatInvalid;
-    for (const [d, ok] of mxCache) {
-      const count = fmt.filter(r => r.domain === d).length;
-      if (ok === true)  v   += count;
-      if (ok === false) inv += count;
-    }
-    setMini(emails.length, v, inv);
+function renderChips() {
+  var wrap = document.getElementById('fileChips');
+  wrap.innerHTML = '';
+  state.files.forEach(function(f, i) {
+    var kb   = (f.size / 1024).toFixed(1);
+    var chip = document.createElement('div');
+    chip.className = 'file-chip';
+    chip.innerHTML =
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+        '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>' +
+        '<polyline points="14 2 14 8 20 8"/></svg>' +
+      '<span>' + escHtml(f.name) + '</span>' +
+      '<span class="chip-size">' + kb + '\u00a0KB</span>' +
+      '<button class="chip-remove" onclick="removeFile(' + i + ')" title="Remove">\u2715</button>';
+    wrap.appendChild(chip);
   });
-
-  setLive(null);
-  setPct(96, 'Building results…');
-  setStep(4);
-  await raf();
-
-  // ── Build results with reasons
-  state.results = fmt.map(r => {
-    const mxOk = r.formatOk ? (mxMap.get(r.domain) ?? null) : null;
-    let status, reason;
-
-    if (!r.formatOk) {
-      status = 'invalid';
-      reason = r.fmtReason;
-    } else if (mxOk === true) {
-      status = 'valid';
-      reason = 'Mail server verified';
-    } else if (mxOk === false) {
-      status = 'invalid';
-      reason = 'No mail server found';
-    } else {
-      status = 'pending';
-      reason = 'DNS check timed out';
-    }
-    return { email: r.email, domain: r.domain, formatOk: r.formatOk, mxOk, status, reason };
-  });
-
-  setPct(100, 'Done!');
-  await raf();
-
-  setTimeout(() => {
-    hideProgress();
-    setBtn(false);
-
-    const vc = state.results.filter(r => r.status === 'valid').length;
-    document.getElementById('dlCsv').disabled = vc === 0;
-    document.getElementById('dlTxt').disabled = vc === 0;
-
-    state.filter = 'all';
-    state.search = '';
-    state.page   = 1;
-    document.getElementById('searchInput').value = '';
-    document.querySelectorAll('#filterTabs .tab').forEach((t, i) => t.classList.toggle('active', i === 0));
-
-    document.getElementById('resultsCard').style.display = '';
-    applyFilter();
-    updateStats();
-    document.getElementById('resultsCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, 600);
 }
 
-// ── FILTER / SEARCH ───────────────────────────────────────────────────────
-function setFilter(f) {
-  state.filter = f;
-  state.page   = 1;
-  const keys   = ['all', 'valid', 'invalid', 'pending'];
-  document.querySelectorAll('#filterTabs .tab').forEach((t, i) =>
-    t.classList.toggle('active', keys[i] === f));
-  applyFilter();
-}
-function onSearch() {
-  state.search = document.getElementById('searchInput').value.toLowerCase();
-  state.page   = 1;
-  applyFilter();
-}
-function applyFilter() {
-  state.filtered = state.results.filter(r => {
-    if (state.filter !== 'all' && r.status !== state.filter) return false;
-    if (state.search && !r.email.includes(state.search) && !r.domain.includes(state.search)) return false;
-    return true;
-  });
-  renderTable();
-}
-
-// ── TABLE RENDER ──────────────────────────────────────────────────────────
-function renderTable() {
-  const tbody = document.getElementById('tableBody');
-  const start = (state.page - 1) * PER_PAGE;
-  const slice = state.filtered.slice(start, start + PER_PAGE);
-  const empty = state.filtered.length === 0;
-
-  document.getElementById('mainTable').style.display  = empty ? 'none' : '';
-  document.getElementById('emptyState').style.display = empty ? '' : 'none';
-  document.getElementById('resultCount').textContent  =
-    state.filtered.length.toLocaleString() + ' email' + (state.filtered.length !== 1 ? 's' : '');
-
-  tbody.innerHTML = slice.map((r, i) => {
-    const n    = start + i + 1;
-    const fmt  = r.formatOk ? '<span class="chk">✓</span>' : '<span class="crs">✗</span>';
-    const mx   = r.mxOk === true  ? '<span class="chk">✓</span>'
-               : r.mxOk === false ? '<span class="crs">✗</span>'
-               : r.formatOk       ? '<span class="dsh" title="DNS timeout">?</span>'
-               :                    '<span class="dsh">—</span>';
-    const badge = r.status === 'valid'
-      ? `<span class="badge badge-valid"><span class="badge-dot"></span>Valid</span>`
-      : r.status === 'invalid'
-      ? `<span class="badge badge-invalid"><span class="badge-dot"></span>Invalid</span>`
-      : `<span class="badge badge-pending"><span class="badge-dot"></span>Unverified</span>`;
-    const reasonClass = `reason-${r.status}`;
-
-    return `<tr>
-      <td style="color:#CBD5E1;font-size:12px">${n}</td>
-      <td><div class="email-cell">${escHtml(r.email)}
-        <button class="copy-btn" title="Copy email" onclick="copyText('${escAttr(r.email)}')">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-          </svg>
-        </button>
-      </div></td>
-      <td class="domain-cell">${escHtml(r.domain)}</td>
-      <td>${fmt}</td>
-      <td>${mx}</td>
-      <td>${badge}</td>
-      <td class="reason-cell ${reasonClass}">${escHtml(r.reason)}</td>
-      <td></td>
-    </tr>`;
-  }).join('');
-
-  renderPagination();
-}
-
-function renderPagination() {
-  const total = state.filtered.length;
-  const pages = Math.ceil(total / PER_PAGE);
-  const s     = (state.page - 1) * PER_PAGE + 1;
-  const e     = Math.min(state.page * PER_PAGE, total);
-  document.getElementById('pageInfo').textContent = total > 0 ? `${s}–${e} of ${total.toLocaleString()}` : '';
-  const btns = document.getElementById('pageBtns');
-  if (pages <= 1) { btns.innerHTML = ''; return; }
-  const lo = Math.max(1, state.page - 2);
-  const hi = Math.min(pages, state.page + 2);
-  let html = `<button class="page-btn" ${state.page === 1 ? 'disabled' : ''} onclick="goPage(${state.page - 1})">‹</button>`;
-  for (let p = lo; p <= hi; p++)
-    html += `<button class="page-btn${p === state.page ? ' active' : ''}" onclick="goPage(${p})">${p}</button>`;
-  html += `<button class="page-btn" ${state.page === pages ? 'disabled' : ''} onclick="goPage(${state.page + 1})">›</button>`;
-  btns.innerHTML = html;
-}
-function goPage(p) { state.page = p; renderTable(); }
-
-// ── STATS + DONUT ─────────────────────────────────────────────────────────
-function updateStats() {
-  const total   = state.results.length;
-  const valid   = state.results.filter(r => r.status === 'valid').length;
-  const invalid = state.results.filter(r => r.status === 'invalid').length;
-  const pending = state.results.filter(r => r.status === 'pending').length;
-
-  document.getElementById('sTotal').textContent    = total.toLocaleString();
-  document.getElementById('sValid').textContent    = valid.toLocaleString();
-  document.getElementById('sInvalid').textContent  = invalid.toLocaleString();
-  document.getElementById('sPending').textContent  = pending.toLocaleString();
-  document.getElementById('lgValid').textContent   = valid.toLocaleString();
-  document.getElementById('lgInvalid').textContent = invalid.toLocaleString();
-  document.getElementById('lgPending').textContent = pending.toLocaleString();
-
-  const pct = total > 0 ? Math.round(valid / total * 100) : 0;
-  document.getElementById('donutPct').textContent = total > 0 ? pct + '%' : '—';
-  document.getElementById('donutSection').style.display = total > 0 ? 'flex' : 'none';
-
-  if (total > 0) {
-    const C    = 2 * Math.PI * 56;
-    const vLen = (valid   / total) * C;
-    const iLen = (invalid / total) * C;
-    const pLen = (pending / total) * C;
-    const av = document.getElementById('arcValid');
-    const ai = document.getElementById('arcInvalid');
-    const ap = document.getElementById('arcPending');
-    av.setAttribute('stroke-dasharray',  `${vLen} ${C - vLen}`);
-    av.setAttribute('stroke-dashoffset', '0');
-    ai.setAttribute('stroke-dasharray',  `${iLen} ${C - iLen}`);
-    ai.setAttribute('stroke-dashoffset', `${C - vLen}`);
-    ap.setAttribute('stroke-dasharray',  `${pLen} ${C - pLen}`);
-    ap.setAttribute('stroke-dashoffset', `${Math.max(0, C - vLen - iLen)}`);
-  }
-}
-
-// ── DOWNLOAD ──────────────────────────────────────────────────────────────
-function downloadCSV() {
-  const valid = state.results.filter(r => r.status === 'valid');
-  dl('valid_emails.csv', 'Email,Domain\n' + valid.map(r => `${r.email},${r.domain}`).join('\n'), 'text/csv');
-}
-function downloadTXT() {
-  const valid = state.results.filter(r => r.status === 'valid');
-  dl('valid_emails.txt', valid.map(r => r.email).join('\n'), 'text/plain');
-}
-function dl(name, content, mime) {
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob([content], { type: mime })), download: name,
-  });
-  a.click(); URL.revokeObjectURL(a.href);
-}
-
-// ── PROGRESS HELPERS ──────────────────────────────────────────────────────
-function showProgress() {
-  document.getElementById('progressWrap').style.display = '';
-  document.getElementById('miniCounts').style.display   = 'none';
-  document.getElementById('liveCheck').style.display    = 'none';
-  setPct(0, '');
-  setStep(0);
-}
-function hideProgress() {
-  document.getElementById('progressWrap').style.display = 'none';
-}
-function setStep(n) {
-  for (let i = 1; i <= 4; i++) {
-    const el = document.getElementById('ps' + i);
-    if (!el) continue;
-    el.className = 'pstep' + (i < n ? ' done' : i === n ? ' active' : '');
-  }
-  for (let i = 1; i <= 3; i++) {
-    const ln = document.getElementById('pl' + i);
-    if (ln) ln.className = 'pstep-line' + (i < n ? ' done' : '');
-  }
-}
-function setPct(pct, text) {
-  document.getElementById('progressFill').style.width = pct + '%';
-  document.getElementById('progressPct').textContent  = pct + '%';
-  if (text) document.getElementById('progressText').textContent = text;
-}
-function setLive(text) {
-  const el = document.getElementById('liveCheck');
-  if (text) { el.style.display = 'flex'; document.getElementById('liveText').textContent = text; }
-  else      { el.style.display = 'none'; }
-}
-function setMini(found, valid, invalid) {
-  document.getElementById('miniCounts').style.display = 'flex';
-  document.getElementById('mcFound').innerHTML   = `<span class="mc-dot gray-dot"></span><span>${found.toLocaleString()} found</span>`;
-  document.getElementById('mcValid').innerHTML   = `<span class="mc-dot green-dot"></span><span>${valid.toLocaleString()} valid</span>`;
-  document.getElementById('mcInvalid').innerHTML = `<span class="mc-dot red-dot"></span><span>${invalid.toLocaleString()} invalid</span>`;
-}
-
-// ── UTILS ─────────────────────────────────────────────────────────────────
-async function copyText(t) { try { await navigator.clipboard.writeText(t); } catch {} }
-function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function escAttr(s) { return s.replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
-function raf()      { return new Promise(resolve => requestAnimationFrame(resolve)); }
-function setBtn(d)  { document.getElementById('validateBtn').disabled = d; }
+/* ── ALERT ─────────────────────────────────────────────────────────────── */
 function showAlert(msg) {
   document.getElementById('alertText').textContent = msg;
   document.getElementById('alertEl').style.display = 'flex';
 }
-function hideAlert() { document.getElementById('alertEl').style.display = 'none'; }
+function hideAlert() {
+  document.getElementById('alertEl').style.display = 'none';
+}
+
+/* ── PROGRESS HELPERS ──────────────────────────────────────────────────── */
+function raf() {
+  return new Promise(function(resolve) {
+    requestAnimationFrame(function() { requestAnimationFrame(resolve); });
+  });
+}
+
+function setStep(n) {
+  for (var i = 1; i <= 4; i++) {
+    var ps = document.getElementById('ps' + i);
+    if (!ps) continue;
+    ps.classList.remove('active', 'done');
+    if (i < n)       ps.classList.add('done');
+    else if (i === n) ps.classList.add('active');
+  }
+  for (var j = 1; j <= 3; j++) {
+    var pl = document.getElementById('pl' + j);
+    if (pl) pl.classList.toggle('done', j < n);
+  }
+}
+
+function setPct(pct, text) {
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressPct').textContent  = pct + '%';
+  if (text !== undefined) document.getElementById('progressText').textContent = text;
+}
+
+function setLive(domain) {
+  var lc = document.getElementById('liveCheck');
+  if (domain) {
+    lc.style.display = 'flex';
+    document.getElementById('liveText').textContent = 'Checking ' + domain + '\u2026';
+  } else {
+    lc.style.display = 'none';
+  }
+}
+
+function setMini(found, valid, invalid) {
+  document.getElementById('miniCounts').style.display = 'flex';
+  document.getElementById('mcFound').querySelector('span:last-child').textContent   = found   + ' found';
+  document.getElementById('mcValid').querySelector('span:last-child').textContent   = valid   + ' valid';
+  document.getElementById('mcInvalid').querySelector('span:last-child').textContent = invalid + ' invalid';
+}
+
+/* ── EMAIL EXTRACTION ──────────────────────────────────────────────────── */
+function extractEmails(text) {
+  var re   = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+  var raw  = text.match(re) || [];
+  var seen = {};
+  var out  = [];
+  raw.forEach(function(e) {
+    var lc = e.toLowerCase();
+    if (!seen[lc]) { seen[lc] = true; out.push(lc); }
+  });
+  return out;
+}
+
+/* ── FORMAT VALIDATION ─────────────────────────────────────────────────── */
+function validateFormat(email) {
+  if (!email.includes('@'))                          return { ok: false, reason: 'Missing @ symbol' };
+  var parts = email.split('@');
+  if (parts.length !== 2)                            return { ok: false, reason: 'Multiple @ symbols' };
+  var local  = parts[0];
+  var domain = parts[1];
+  if (!local)                                        return { ok: false, reason: 'Empty local part' };
+  if (local.length > 64)                             return { ok: false, reason: 'Local part too long' };
+  if (email.length > 254)                            return { ok: false, reason: 'Email too long' };
+  if (local.charAt(0) === '.' || local.slice(-1) === '.') return { ok: false, reason: 'Leading/trailing dot' };
+  if (local.indexOf('..') !== -1)                    return { ok: false, reason: 'Double dot in address' };
+  if (!/^[a-zA-Z0-9._%+\-]+$/.test(local))          return { ok: false, reason: 'Invalid local characters' };
+  if (!domain)                                       return { ok: false, reason: 'Empty domain' };
+  if (!/^[a-zA-Z0-9.\-]+$/.test(domain))            return { ok: false, reason: 'Invalid domain characters' };
+  var domParts = domain.split('.');
+  if (domParts.length < 2)                           return { ok: false, reason: 'Missing TLD' };
+  var tld = domParts[domParts.length - 1];
+  if (tld.length < 2)                                return { ok: false, reason: 'TLD too short' };
+  return { ok: true, reason: 'Valid format' };
+}
+
+/* ── MX CHECK ──────────────────────────────────────────────────────────── */
+async function checkMX(domain) {
+  if (mxCache.has(domain)) return mxCache.get(domain);
+  try {
+    var ctrl = new AbortController();
+    var tid  = setTimeout(function() { ctrl.abort(); }, MX_TO);
+    var res  = await fetch(
+      'https://dns.google/resolve?name=' + encodeURIComponent(domain) + '&type=MX',
+      { signal: ctrl.signal }
+    );
+    clearTimeout(tid);
+    var data  = await res.json();
+    var hasMX = data.Status === 0 && Array.isArray(data.Answer) && data.Answer.length > 0;
+    var result = hasMX
+      ? { ok: true,  reason: 'Mail server found' }
+      : { ok: false, reason: 'No mail server found' };
+    mxCache.set(domain, result);
+    return result;
+  } catch(err) {
+    var result2 = {
+      ok: null,
+      reason: (err.name === 'AbortError') ? 'DNS check timed out' : 'DNS lookup failed'
+    };
+    mxCache.set(domain, result2);
+    return result2;
+  }
+}
+
+/* ── BATCH MX CHECK ────────────────────────────────────────────────────── */
+async function batchCheck(domains, onDone) {
+  var unique = domains.filter(function(d, i, a) {
+    return a.indexOf(d) === i && !mxCache.has(d);
+  });
+  for (var i = 0; i < unique.length; i += BATCH) {
+    var slice = unique.slice(i, i + BATCH);
+    await Promise.all(slice.map(async function(d) {
+      await checkMX(d);
+      if (onDone) onDone(d);
+    }));
+    await raf();
+  }
+}
+
+/* ── RUNNING UI ────────────────────────────────────────────────────────── */
+function setRunningUI(on) {
+  var btn1 = document.getElementById('validateBtn');
+  var btn2 = document.getElementById('validateBtnTop');
+  btn1.disabled = on;
+  btn2.disabled = on;
+  var svgCheck17 =
+    '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">' +
+    '<path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>';
+  var svgCheck15 =
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">' +
+    '<path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>';
+  if (on) {
+    btn1.textContent = 'Validating\u2026';
+    btn2.textContent = 'Validating\u2026';
+  } else {
+    btn1.innerHTML = svgCheck17 + ' Validate Emails';
+    btn2.innerHTML = svgCheck15 + ' Validate';
+  }
+}
+
+/* ── MAIN VALIDATION ───────────────────────────────────────────────────── */
+async function startValidation() {
+  if (state.running) return;
+
+  hideAlert();
+
+  var text = '';
+  if (state.tab === 'upload') {
+    if (state.files.length === 0) { showAlert('Please upload at least one file.'); return; }
+    text = state.files.map(function(f) { return f.text; }).join('\n');
+  } else {
+    text = document.getElementById('pasteArea').value.trim();
+    if (!text) { showAlert('Please paste some text first.'); return; }
+  }
+
+  state.running = true;
+  setRunningUI(true);
+  mxCache.clear();
+  state.emails = [];
+  state.page   = 1;
+
+  var prog = document.getElementById('progressWrap');
+  prog.style.display = 'block';
+  document.getElementById('liveCheck').style.display  = 'none';
+  document.getElementById('miniCounts').style.display = 'none';
+  document.getElementById('section-results').style.display = 'none';
+
+  try {
+    /* ── STEP 1: Extract ── */
+    setStep(1);
+    setPct(5, 'Extracting emails\u2026');
+    await raf();
+
+    var raw = extractEmails(text);
+    if (raw.length === 0) {
+      showAlert('No email addresses found in the input.');
+      state.running = false;
+      setRunningUI(false);
+      prog.style.display = 'none';
+      return;
+    }
+
+    setPct(15, 'Found ' + raw.length + ' unique email' + (raw.length !== 1 ? 's' : '') + '. Checking format\u2026');
+    await raf();
+
+    /* ── STEP 2: Format ── */
+    setStep(2);
+    var formatted = raw.map(function(email) {
+      var domain = email.split('@')[1] || '';
+      var fmt    = validateFormat(email);
+      return {
+        email:        email,
+        domain:       domain,
+        formatOk:     fmt.ok,
+        formatReason: fmt.reason,
+        mxOk:         null,
+        mxReason:     '',
+        status:       'pending'
+      };
+    });
+
+    var fmtBad = formatted.filter(function(e) { return !e.formatOk; }).length;
+    setMini(raw.length, 0, fmtBad);
+    setPct(30, 'Format check done. Starting DNS/MX verification\u2026');
+    await raf();
+
+    /* ── STEP 3: DNS/MX ── */
+    setStep(3);
+    var validDomains = formatted
+      .filter(function(e) { return e.formatOk; })
+      .map(function(e) { return e.domain; })
+      .filter(function(d, i, a) { return a.indexOf(d) === i; });
+
+    var dnsChecked = 0;
+    var totalDns   = validDomains.length;
+
+    await batchCheck(validDomains, function(domain) {
+      dnsChecked++;
+      setLive(domain);
+      var validSoFar   = cacheCount(true);
+      var invalidSoFar = cacheCount(false);
+      setMini(raw.length, validSoFar, fmtBad + invalidSoFar);
+      var pct = 30 + Math.floor((dnsChecked / Math.max(totalDns, 1)) * 60);
+      setPct(Math.min(pct, 89), 'DNS/MX checking\u2026 ' + dnsChecked + '/' + totalDns + ' domains');
+    });
+
+    setLive(null);
+
+    /* assign final status */
+    formatted.forEach(function(e) {
+      if (!e.formatOk) {
+        e.status   = 'invalid';
+        e.mxOk     = false;
+        e.mxReason = '';
+      } else {
+        var mx = mxCache.get(e.domain);
+        if (mx) {
+          e.mxOk     = mx.ok;
+          e.mxReason = mx.reason;
+          if      (mx.ok === true)  e.status = 'valid';
+          else if (mx.ok === false) e.status = 'invalid';
+          else                      e.status = 'pending';
+        } else {
+          e.mxOk     = null;
+          e.mxReason = 'DNS check skipped';
+          e.status   = 'pending';
+        }
+      }
+    });
+
+    state.emails = formatted;
+
+    /* ── STEP 4: Done ── */
+    setStep(4);
+    var nValid   = formatted.filter(function(e) { return e.status === 'valid';   }).length;
+    var nInvalid = formatted.filter(function(e) { return e.status === 'invalid'; }).length;
+    var nPending = formatted.filter(function(e) { return e.status === 'pending'; }).length;
+
+    setMini(raw.length, nValid, nInvalid);
+    setPct(100, 'Done! ' + nValid + ' valid \u00b7 ' + nInvalid + ' invalid \u00b7 ' + nPending + ' unverified');
+    await raf();
+
+    updateStats();
+    renderTable();
+
+    document.getElementById('section-results').style.display = '';
+    setTimeout(function() { navClick('results'); }, 120);
+
+    saveHistory({
+      total: raw.length, valid: nValid, invalid: nInvalid,
+      pending: nPending, date: new Date().toISOString()
+    });
+    renderHistory();
+
+    showToast('\u2705 Done \u2014 ' + nValid + ' valid email' + (nValid !== 1 ? 's' : '') + ' found');
+
+    document.getElementById('dlCsv').disabled = (nValid === 0);
+    document.getElementById('dlTxt').disabled = (nValid === 0);
+
+  } catch(err) {
+    console.error(err);
+    showAlert('Unexpected error: ' + err.message);
+  }
+
+  state.running = false;
+  setRunningUI(false);
+}
+
+function cacheCount(okVal) {
+  var n = 0;
+  mxCache.forEach(function(v) { if (v.ok === okVal) n++; });
+  return n;
+}
+
+/* ── STATS + DONUT ─────────────────────────────────────────────────────── */
+function updateStats() {
+  var emails   = state.emails;
+  var total    = emails.length;
+  var nValid   = emails.filter(function(e) { return e.status === 'valid';   }).length;
+  var nInvalid = emails.filter(function(e) { return e.status === 'invalid'; }).length;
+  var nPending = emails.filter(function(e) { return e.status === 'pending'; }).length;
+
+  /* stat cards */
+  document.getElementById('sTotal').textContent   = total;
+  document.getElementById('sValid').textContent   = nValid;
+  document.getElementById('sInvalid').textContent = nInvalid;
+  document.getElementById('sPending').textContent = nPending;
+  document.getElementById('scSub').textContent    = total ? total + ' extracted' : 'Upload a file to get started';
+  document.getElementById('scValidSub').textContent =
+    total ? Math.round(nValid / total * 100) + '% of total' : 'Ready to use';
+
+  /* sidebar mini-stats */
+  document.getElementById('sbValid').textContent   = nValid;
+  document.getElementById('sbInvalid').textContent = nInvalid;
+  document.getElementById('sbPending').textContent = nPending;
+
+  /* donut */
+  var donutSection = document.getElementById('donutSection');
+  var donutEmpty   = document.getElementById('donutEmpty');
+
+  if (total === 0) {
+    donutSection.style.display = 'none';
+    donutEmpty.style.display   = '';
+    return;
+  }
+
+  donutSection.style.display = '';
+  donutEmpty.style.display   = 'none';
+
+  var dValid   = (nValid   / total) * C;
+  var dInvalid = (nInvalid / total) * C;
+  var dPending = (nPending / total) * C;
+
+  setArc('arcInvalid', dInvalid, 0);
+  setArc('arcPending', dPending, dInvalid);
+  setArc('arcValid',   dValid,   dInvalid + dPending);
+
+  document.getElementById('donutPct').textContent  = Math.round(nValid / total * 100) + '%';
+  document.getElementById('lgValid').textContent   = nValid;
+  document.getElementById('lgInvalid').textContent = nInvalid;
+  document.getElementById('lgPending').textContent = nPending;
+}
+
+function setArc(id, len, offset) {
+  var el = document.getElementById(id);
+  el.setAttribute('stroke-dasharray',  len.toFixed(2) + ' ' + (C - len).toFixed(2));
+  el.setAttribute('stroke-dashoffset', (-offset).toFixed(2));
+}
+
+/* ── RESULTS TABLE ─────────────────────────────────────────────────────── */
+function getFiltered() {
+  var list = state.emails;
+  if (state.filter !== 'all') {
+    list = list.filter(function(e) { return e.status === state.filter; });
+  }
+  if (state.search) {
+    var q = state.search.toLowerCase();
+    list  = list.filter(function(e) {
+      return e.email.indexOf(q) !== -1 || e.domain.indexOf(q) !== -1;
+    });
+  }
+  return list;
+}
+
+function renderTable() {
+  var filtered = getFiltered();
+  var total    = filtered.length;
+  var pages    = Math.max(1, Math.ceil(total / PER_PAGE));
+  if (state.page > pages) state.page = pages;
+  var start = (state.page - 1) * PER_PAGE;
+  var slice = filtered.slice(start, start + PER_PAGE);
+
+  updateFilterTabs();
+
+  document.getElementById('resultCount').textContent = total + ' result' + (total !== 1 ? 's' : '');
+  document.getElementById('resultsSub').textContent  =
+    total + ' email' + (total !== 1 ? 's' : '') + '\u00a0\u00b7\u00a0page ' + state.page + ' of ' + pages;
+
+  var tbody   = document.getElementById('tableBody');
+  var emptyEl = document.getElementById('emptyState');
+  var tableEl = document.getElementById('mainTable');
+  var paginEl = document.getElementById('paginationEl');
+
+  if (slice.length === 0) {
+    emptyEl.style.display = '';
+    tableEl.style.display = 'none';
+    paginEl.style.display = 'none';
+    tbody.innerHTML = '';
+    return;
+  }
+
+  emptyEl.style.display = 'none';
+  tableEl.style.display = '';
+  paginEl.style.display = '';
+  tbody.innerHTML = '';
+
+  slice.forEach(function(e, idx) {
+    var rowNum  = start + idx + 1;
+    var fmtChk  = e.formatOk ? '<span class="chk">\u2713</span>' : '<span class="crs">\u2717</span>';
+    var mxChk;
+    if      (e.mxOk === true)  mxChk = '<span class="chk">\u2713</span>';
+    else if (e.mxOk === false) mxChk = '<span class="crs">\u2717</span>';
+    else                        mxChk = '<span class="dsh">\u2014</span>';
+
+    var badgeCls, statusLabel;
+    if      (e.status === 'valid')   { badgeCls = 'badge-valid';   statusLabel = 'Valid'; }
+    else if (e.status === 'invalid') { badgeCls = 'badge-invalid'; statusLabel = 'Invalid'; }
+    else                              { badgeCls = 'badge-pending'; statusLabel = 'Unverified'; }
+
+    var reasonCls = 'reason-cell';
+    if (e.status === 'valid')   reasonCls += ' reason-valid';
+    if (e.status === 'invalid') reasonCls += ' reason-invalid';
+    if (e.status === 'pending') reasonCls += ' reason-pending';
+
+    var reason = (e.mxReason) ? e.mxReason : (e.formatReason || '\u2014');
+
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td style="color:var(--gray-400);font-size:12px">' + rowNum + '</td>' +
+      '<td><div class="email-cell">' +
+        '<span>' + escHtml(e.email) + '</span>' +
+        '<button class="copy-btn" onclick="copyEmail(\'' + escAttr(e.email) + '\')" title="Copy">' +
+          '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+            '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>' +
+            '<path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>' +
+          '</svg>' +
+        '</button>' +
+      '</div></td>' +
+      '<td class="domain-cell">' + escHtml(e.domain) + '</td>' +
+      '<td>' + fmtChk + '</td>' +
+      '<td>' + mxChk + '</td>' +
+      '<td><span class="badge ' + badgeCls + '"><span class="badge-dot"></span>' + statusLabel + '</span></td>' +
+      '<td class="' + reasonCls + '">' + escHtml(reason) + '</td>' +
+      '<td></td>';
+    tbody.appendChild(tr);
+  });
+
+  renderPagination(pages);
+}
+
+function updateFilterTabs() {
+  var all     = state.emails.length;
+  var valid   = state.emails.filter(function(e) { return e.status === 'valid';   }).length;
+  var invalid = state.emails.filter(function(e) { return e.status === 'invalid'; }).length;
+  var pending = state.emails.filter(function(e) { return e.status === 'pending'; }).length;
+  var tabs    = document.querySelectorAll('#filterTabs .tab');
+  var labels  = ['All (' + all + ')', 'Valid (' + valid + ')', 'Invalid (' + invalid + ')', 'Unverified (' + pending + ')'];
+  tabs.forEach(function(t, i) { t.textContent = labels[i]; });
+}
+
+function setFilter(f) {
+  state.filter = f;
+  state.page   = 1;
+  var map  = { all: 0, valid: 1, invalid: 2, pending: 3 };
+  var tabs = document.querySelectorAll('#filterTabs .tab');
+  tabs.forEach(function(t, i) { t.classList.toggle('active', i === map[f]); });
+  renderTable();
+}
+
+function onSearch() {
+  state.search = document.getElementById('searchInput').value.toLowerCase();
+  state.page   = 1;
+  renderTable();
+}
+
+function renderPagination(pages) {
+  var info = document.getElementById('pageInfo');
+  var btns = document.getElementById('pageBtns');
+  info.textContent = 'Page ' + state.page + ' of ' + pages;
+  btns.innerHTML   = '';
+
+  var prev = document.createElement('button');
+  prev.className   = 'page-btn';
+  prev.textContent = '\u2039';
+  prev.disabled    = (state.page === 1);
+  prev.onclick     = function() { state.page--; renderTable(); };
+  btns.appendChild(prev);
+
+  var maxShow = 5;
+  var lo = Math.max(1, state.page - 2);
+  var hi = Math.min(pages, lo + maxShow - 1);
+  lo     = Math.max(1, hi - maxShow + 1);
+
+  for (var p = lo; p <= hi; p++) {
+    var b = document.createElement('button');
+    b.className  = 'page-btn' + (p === state.page ? ' active' : '');
+    b.textContent = p;
+    (function(pp) {
+      b.onclick = function() { state.page = pp; renderTable(); };
+    })(p);
+    btns.appendChild(b);
+  }
+
+  var next = document.createElement('button');
+  next.className   = 'page-btn';
+  next.textContent = '\u203a';
+  next.disabled    = (state.page === pages);
+  next.onclick     = function() { state.page++; renderTable(); };
+  btns.appendChild(next);
+}
+
+/* ── CLIPBOARD ─────────────────────────────────────────────────────────── */
+function copyEmail(email) {
+  navigator.clipboard.writeText(email).then(function() {
+    showToast('\ud83d\udccb Copied: ' + email);
+  });
+}
+
+/* ── EXPORT ────────────────────────────────────────────────────────────── */
+function downloadCSV() {
+  var valid = state.emails.filter(function(e) { return e.status === 'valid'; });
+  if (!valid.length) return;
+  var rows = ['email,domain'].concat(valid.map(function(e) { return e.email + ',' + e.domain; }));
+  triggerDownload(rows.join('\n'), 'valid-emails.csv', 'text/csv');
+  showToast('\u2b07\ufe0f Downloaded ' + valid.length + ' emails as CSV');
+}
+
+function downloadTXT() {
+  var valid = state.emails.filter(function(e) { return e.status === 'valid'; });
+  if (!valid.length) return;
+  triggerDownload(valid.map(function(e) { return e.email; }).join('\n'), 'valid-emails.txt', 'text/plain');
+  showToast('\u2b07\ufe0f Downloaded ' + valid.length + ' emails as TXT');
+}
+
+function triggerDownload(content, filename, mime) {
+  var a    = document.createElement('a');
+  a.href   = URL.createObjectURL(new Blob([content], { type: mime }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* ── HISTORY ───────────────────────────────────────────────────────────── */
+var HISTORY_KEY = 'emailfilter_history';
+var HISTORY_MAX = 20;
+
+function saveHistory(entry) {
+  var h = getHistory();
+  h.unshift(entry);
+  if (h.length > HISTORY_MAX) h.length = HISTORY_MAX;
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch(e) {}
+}
+
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
+  catch(e) { return []; }
+}
+
+function clearHistory() {
+  try { localStorage.removeItem(HISTORY_KEY); } catch(e) {}
+  renderHistory();
+  showToast('\ud83d\uddd1\ufe0f History cleared');
+}
+
+function renderHistory() {
+  var body = document.getElementById('historyBody');
+  var h    = getHistory();
+
+  if (h.length === 0) {
+    body.innerHTML =
+      '<div class="empty-state" style="padding:32px 0">' +
+        '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"' +
+          ' style="color:#CBD5E1;margin:0 auto 10px;display:block">' +
+          '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' +
+        '<p>No history yet</p>' +
+      '</div>';
+    return;
+  }
+
+  var items = h.map(function(e) {
+    var d   = new Date(e.date);
+    var ago = timeAgo(d);
+    return (
+      '<div class="history-item">' +
+        '<div class="hi-icon">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+            '<path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>' +
+        '</div>' +
+        '<div class="hi-body">' +
+          '<div class="hi-title">' + e.total + ' email' + (e.total !== 1 ? 's' : '') + ' processed</div>' +
+          '<div class="hi-meta">' +
+            d.toLocaleDateString() + ' \u00b7 ' +
+            d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
+          '</div>' +
+          '<div class="hi-badges">' +
+            '<span class="hi-b hb-green">\u2713 ' + e.valid + ' valid</span>' +
+            '<span class="hi-b hb-red">\u2717 ' + e.invalid + ' invalid</span>' +
+            (e.pending ? '<span class="hi-b hb-amber">\u26a0 ' + e.pending + ' unverified</span>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="hi-time">' + ago + '</div>' +
+      '</div>'
+    );
+  }).join('');
+
+  body.innerHTML = '<div style="padding:4px 20px 8px">' + items + '</div>';
+}
+
+function timeAgo(date) {
+  var s = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (s < 60)    return 'just now';
+  if (s < 3600)  return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
+/* ── TOAST ─────────────────────────────────────────────────────────────── */
+var toastTimer = null;
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function() { t.classList.remove('show'); }, 3200);
+}
+
+/* ── UTILS ─────────────────────────────────────────────────────────────── */
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+function escAttr(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+/* ── INIT ──────────────────────────────────────────────────────────────── */
+(function init() {
+  updateStats();
+  renderHistory();
+}());
