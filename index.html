@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EmailFilter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #F1F5F9;
+  color: #0F172A;
+  min-height: 100vh;
+}
+
+/* ── NAVBAR ── */
+.navbar {
+  background: #fff;
+  border-bottom: 1px solid #E2E8F0;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  padding: 0 28px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  gap: 8px;
+}
+.nav-logo {
+  font-size: 17px;
+  font-weight: 700;
+  color: #2563EB;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+}
+.nav-logo-icon {
+  width: 32px; height: 32px;
+  background: #2563EB;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.nav-logo-icon svg { color: #fff; }
+.nav-logo-text { color: #0F172A; }
+
+/* ── LAYOUT ── */
+.container {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 28px 24px;
+  display: grid;
+  grid-template-columns: 1fr 304px;
+  grid-template-rows: auto 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.page-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.page-title { font-size: 22px; font-weight: 700; }
+.left-col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+/* ── CARDS ── */
+.card {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(15,23,42,.07), 0 1px 2px rgba(15,23,42,.04);
+  overflow: hidden;
+}
+.card-header {
+  padding: 15px 20px;
+  border-bottom: 1px solid #F1F5F9;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.card-title { font-size: 14px; font-weight: 600; }
+.card-body { padding: 20px; }
+
+/* ── TABS ── */
+.tabs {
+  display: flex;
+  gap: 3px;
+  background: #F8FAFC;
+  border-radius: 8px;
+  padding: 3px;
+  flex-shrink: 0;
+}
+.tab {
+  padding: 5px 13px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  color: #64748B;
+  border: none;
+  background: none;
+  white-space: nowrap;
+  transition: all .15s;
+}
+.tab.active {
+  background: #fff;
+  color: #0F172A;
+  box-shadow: 0 1px 3px rgba(0,0,0,.1);
+}
+
+/* ── DROP ZONE ── */
+.drop-zone {
+  border: 2px dashed #CBD5E1;
+  border-radius: 10px;
+  padding: 32px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all .2s;
+  background: #F8FAFC;
+  user-select: none;
+}
+.drop-zone:hover, .drop-zone.dragover {
+  border-color: #2563EB;
+  background: #EFF6FF;
+}
+.drop-zone-icon {
+  width: 44px; height: 44px;
+  background: #EFF6FF;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 12px;
+  color: #2563EB;
+}
+.drop-zone p { font-size: 14px; color: #475569; }
+.drop-zone strong { color: #2563EB; }
+.drop-zone .hint { font-size: 12px; color: #94A3B8; margin-top: 4px; }
+
+/* ── TEXTAREA ── */
+.paste-area {
+  width: 100%;
+  height: 168px;
+  border: 1px solid #E2E8F0;
+  border-radius: 10px;
+  padding: 14px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+  color: #0F172A;
+  background: #FAFAFA;
+  transition: border-color .2s;
+  line-height: 1.6;
+}
+.paste-area:focus { outline: none; border-color: #2563EB; background: #fff; }
+.paste-area::placeholder { color: #94A3B8; }
+.paste-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #94A3B8;
+}
+
+/* ── BUTTONS ── */
+.btn {
+  padding: 9px 18px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.btn-primary { background: #2563EB; color: #fff; }
+.btn-primary:hover:not(:disabled) { background: #1D4ED8; }
+.btn-primary:disabled { background: #93C5FD; cursor: not-allowed; }
+.btn-outline {
+  background: #fff;
+  color: #374151;
+  border: 1px solid #E2E8F0;
+}
+.btn-outline:hover { background: #F8FAFC; }
+.btn-sm { padding: 6px 12px; font-size: 12.5px; }
+
+/* ── FILE INFO ── */
+.file-info {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  background: #F0FDF4;
+  border: 1px solid #BBF7D0;
+  border-radius: 9px;
+  padding: 10px 14px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #166534;
+}
+.file-info svg { flex-shrink: 0; }
+.file-info-clear {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #166534;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: .7;
+  transition: opacity .15s;
+}
+.file-info-clear:hover { opacity: 1; }
+
+/* ── PROGRESS ── */
+.progress-wrap { display: none; margin-top: 16px; }
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #64748B;
+  margin-bottom: 7px;
+}
+.progress-track {
+  background: #E2E8F0;
+  border-radius: 99px;
+  height: 6px;
+  overflow: hidden;
+}
+.progress-fill {
+  background: linear-gradient(90deg, #2563EB, #60A5FA);
+  height: 100%;
+  border-radius: 99px;
+  transition: width .3s ease;
+  width: 0%;
+}
+
+/* ── ALERT ── */
+.alert {
+  display: none;
+  padding: 10px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  margin-top: 12px;
+  align-items: center;
+  gap: 8px;
+}
+.alert-warn { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; }
+.alert-info { background: #EFF6FF; color: #1E40AF; border: 1px solid #BFDBFE; }
+
+/* ── TABLE CONTROLS ── */
+.table-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #F1F5F9;
+  flex-wrap: wrap;
+}
+.search-wrap { position: relative; flex: 1; min-width: 160px; }
+.search-wrap svg {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #94A3B8;
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
+  padding: 7px 10px 7px 32px;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #0F172A;
+  background: #FAFAFA;
+  transition: border-color .2s;
+}
+.search-input:focus { outline: none; border-color: #2563EB; background: #fff; }
+.result-count { font-size: 12px; color: #64748B; white-space: nowrap; }
+
+/* ── TABLE ── */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead tr { background: #F8FAFC; }
+th {
+  padding: 10px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  white-space: nowrap;
+}
+td { padding: 11px 16px; border-top: 1px solid #F8FAFC; }
+tr:hover td { background: #FAFAFA; }
+.email-cell {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 12px;
+  color: #0F172A;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.copy-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #CBD5E1;
+  padding: 2px 3px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: color .15s;
+  flex-shrink: 0;
+}
+.copy-btn:hover { color: #2563EB; }
+.domain-cell { font-size: 12px; color: #64748B; }
+.check-icon { color: #16A34A; font-weight: 700; }
+.cross-icon { color: #DC2626; font-weight: 700; }
+.dash-icon { color: #CBD5E1; }
+
+/* ── BADGES ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.badge-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.badge-valid { color: #16A34A; background: #F0FDF4; }
+.badge-valid .badge-dot { background: #16A34A; }
+.badge-invalid { color: #DC2626; background: #FEF2F2; }
+.badge-invalid .badge-dot { background: #DC2626; }
+.badge-pending { color: #D97706; background: #FFFBEB; }
+.badge-pending .badge-dot { background: #D97706; }
+
+/* ── PAGINATION ── */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-top: 1px solid #F8FAFC;
+  font-size: 12px;
+  color: #64748B;
+}
+.page-btns { display: flex; gap: 4px; }
+.page-btn {
+  width: 30px; height: 30px;
+  border-radius: 7px;
+  border: 1px solid #E2E8F0;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  color: #374151;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .15s;
+}
+.page-btn:hover:not(:disabled):not(.active) { background: #F8FAFC; }
+.page-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+.page-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+/* ── EMPTY STATE ── */
+.empty-state {
+  text-align: center;
+  padding: 52px 20px;
+  color: #94A3B8;
+}
+.empty-state svg { margin: 0 auto 12px; display: block; }
+.empty-state p { font-size: 14px; }
+.empty-state small { font-size: 12px; margin-top: 4px; display: block; }
+
+/* ── SIDEBAR STATS ── */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stat-box {
+  background: #F8FAFC;
+  border-radius: 10px;
+  padding: 14px 12px;
+  text-align: center;
+}
+.stat-box.full { grid-column: 1 / -1; background: #EFF6FF; }
+.stat-box.amber { background: #FFFBEB; }
+.stat-val { font-size: 28px; font-weight: 700; color: #0F172A; line-height: 1; }
+.stat-box.full .stat-val { color: #2563EB; }
+.stat-val-green { color: #16A34A !important; }
+.stat-val-red { color: #DC2626 !important; }
+.stat-val-amber { color: #D97706 !important; }
+.stat-lbl {
+  font-size: 10.5px;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  margin-top: 4px;
+}
+
+/* ── DONUT ── */
+.donut-section {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 16px;
+}
+.donut-wrap {
+  position: relative;
+  width: 128px; height: 128px;
+}
+.donut-svg { transform: rotate(-90deg); }
+.donut-center {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+}
+.donut-pct { font-size: 22px; font-weight: 700; color: #0F172A; }
+.donut-sub { font-size: 10px; color: #94A3B8; margin-top: 1px; }
+.legend { width: 100%; margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.legend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.legend-key { display: flex; align-items: center; gap: 7px; color: #64748B; }
+.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.legend-num { font-weight: 600; color: #0F172A; }
+
+/* ── DOWNLOAD ── */
+.dl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px;
+  border: 1px solid #E2E8F0;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  margin-bottom: 8px;
+  transition: all .15s;
+  width: 100%;
+  text-align: left;
+}
+.dl-row:last-of-type { margin-bottom: 0; }
+.dl-row:hover:not(:disabled) { border-color: #2563EB; color: #2563EB; background: #EFF6FF; }
+.dl-row:disabled { opacity: .4; cursor: not-allowed; }
+.dl-row .dl-left { display: flex; align-items: center; gap: 9px; }
+.dl-hint { font-size: 11px; color: #94A3B8; text-align: center; margin-top: 8px; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 920px) {
+  .container { grid-template-columns: 1fr; }
+  .page-header { grid-column: 1; }
+}
+</style>
+</head>
+<body>
+
+<!-- NAVBAR -->
+<nav class="navbar">
+  <a class="nav-logo" href="#">
+    <div class="nav-logo-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+      </svg>
+    </div>
+    Email<span class="nav-logo-text">Filter</span>
+  </a>
+</nav>
+
+<!-- MAIN -->
+<div class="container">
+
+  <!-- PAGE HEADER -->
+  <div class="page-header">
+    <h1 class="page-title">Email Filter</h1>
+    <button class="btn btn-primary" id="validateBtn" onclick="startValidation()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      Validate Emails
+    </button>
+  </div>
+
+  <!-- LEFT COL -->
+  <div class="left-col">
+
+    <!-- INPUT CARD -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Input</span>
+        <div class="tabs" id="inputTabs">
+          <button class="tab active" onclick="switchTab('upload')">Upload File</button>
+          <button class="tab" onclick="switchTab('paste')">Paste Text</button>
+        </div>
+      </div>
+      <div class="card-body">
+
+        <!-- Upload panel -->
+        <div id="uploadPanel">
+          <div class="drop-zone" id="dropZone"
+            onclick="document.getElementById('fileInput').click()"
+            ondragover="onDragOver(event)"
+            ondragleave="onDragLeave(event)"
+            ondrop="onDrop(event)">
+            <div class="drop-zone-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+              </svg>
+            </div>
+            <p><strong>Click to upload</strong> or drag and drop</p>
+            <p class="hint">TXT &nbsp;·&nbsp; CSV &nbsp;·&nbsp; XLSX — any size</p>
+          </div>
+          <input type="file" id="fileInput" accept=".txt,.csv,.xlsx,.xls" style="display:none" onchange="handleFileSelect(this)">
+          <div class="file-info" id="fileInfo">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="color:#16A34A">
+              <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <span id="fileInfoText"></span>
+            <button class="file-info-clear" onclick="clearFile()">✕ Remove</button>
+          </div>
+        </div>
+
+        <!-- Paste panel -->
+        <div id="pastePanel" style="display:none">
+          <textarea class="paste-area" id="pasteArea"
+            placeholder="Paste any text here — emails will be extracted automatically.&#10;&#10;Works with:&#10;• Raw text with mixed content&#10;• CSV data&#10;• Any format with email addresses"></textarea>
+          <div class="paste-meta">
+            <span id="pasteCount">0 characters</span>
+            <button class="btn btn-outline btn-sm" onclick="clearPaste()">Clear</button>
+          </div>
+        </div>
+
+        <!-- Progress -->
+        <div class="progress-wrap" id="progressWrap">
+          <div class="progress-meta">
+            <span id="progressText">Processing...</span>
+            <span id="progressPct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+        </div>
+
+        <!-- Alert -->
+        <div class="alert alert-warn" id="alertEl">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0">
+            <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+          </svg>
+          <span id="alertText"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RESULTS CARD -->
+    <div class="card" id="resultsCard" style="display:none">
+      <div class="card-header">
+        <span class="card-title">Results</span>
+        <div class="tabs" id="filterTabs">
+          <button class="tab active" onclick="setFilter('all')">All</button>
+          <button class="tab" onclick="setFilter('valid')">Valid</button>
+          <button class="tab" onclick="setFilter('invalid')">Invalid</button>
+          <button class="tab" onclick="setFilter('pending')">Unverified</button>
+        </div>
+      </div>
+      <div class="table-controls">
+        <div class="search-wrap">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+          </svg>
+          <input class="search-input" type="text" id="searchInput" placeholder="Search emails..." oninput="onSearch()">
+        </div>
+        <span class="result-count" id="resultCount"></span>
+      </div>
+      <div class="table-wrap" id="tableWrap">
+        <table id="mainTable">
+          <thead>
+            <tr>
+              <th style="width:42px">#</th>
+              <th>Email Address</th>
+              <th>Domain</th>
+              <th style="width:70px">Format</th>
+              <th style="width:90px">MX Record</th>
+              <th style="width:100px">Status</th>
+              <th style="width:30px"></th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color:#CBD5E1">
+            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+          </svg>
+          <p>No emails match this filter</p>
+          <small>Try a different filter or search term</small>
+        </div>
+      </div>
+      <div class="pagination" id="paginationEl">
+        <span id="pageInfo"></span>
+        <div class="page-btns" id="pageBtns"></div>
+      </div>
+    </div>
+
+  </div><!-- /left-col -->
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+
+    <!-- Stats card -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Summary</span></div>
+      <div class="card-body">
+        <div class="stat-grid">
+          <div class="stat-box full">
+            <div class="stat-val" id="sTotal">—</div>
+            <div class="stat-lbl">Total Found</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-val stat-val-green" id="sValid">—</div>
+            <div class="stat-lbl">Valid</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-val stat-val-red" id="sInvalid">—</div>
+            <div class="stat-lbl">Invalid</div>
+          </div>
+          <div class="stat-box amber" style="grid-column:1/-1">
+            <div class="stat-val stat-val-amber" id="sPending">—</div>
+            <div class="stat-lbl">Unverified (DNS timeout)</div>
+          </div>
+        </div>
+
+        <!-- Donut chart -->
+        <div class="donut-section" id="donutSection">
+          <div class="donut-wrap">
+            <svg class="donut-svg" width="128" height="128" viewBox="0 0 128 128">
+              <circle cx="64" cy="64" r="52" fill="none" stroke="#F1F5F9" stroke-width="18"/>
+              <circle id="arcInvalid" cx="64" cy="64" r="52" fill="none" stroke="#FCA5A5" stroke-width="18"
+                stroke-dasharray="0 327" stroke-dashoffset="0" style="transition:stroke-dasharray .5s ease, stroke-dashoffset .5s ease"/>
+              <circle id="arcPending" cx="64" cy="64" r="52" fill="none" stroke="#FCD34D" stroke-width="18"
+                stroke-dasharray="0 327" stroke-dashoffset="0" style="transition:stroke-dasharray .5s ease, stroke-dashoffset .5s ease"/>
+              <circle id="arcValid"   cx="64" cy="64" r="52" fill="none" stroke="#4ADE80" stroke-width="18"
+                stroke-dasharray="0 327" stroke-dashoffset="0" style="transition:stroke-dasharray .5s ease, stroke-dashoffset .5s ease"/>
+            </svg>
+            <div class="donut-center">
+              <div class="donut-pct" id="donutPct">0%</div>
+              <div class="donut-sub">valid</div>
+            </div>
+          </div>
+          <div class="legend">
+            <div class="legend-row">
+              <div class="legend-key"><div class="legend-dot" style="background:#4ADE80"></div>Valid</div>
+              <div class="legend-num" id="lgValid">0</div>
+            </div>
+            <div class="legend-row">
+              <div class="legend-key"><div class="legend-dot" style="background:#FCA5A5"></div>Invalid</div>
+              <div class="legend-num" id="lgInvalid">0</div>
+            </div>
+            <div class="legend-row">
+              <div class="legend-key"><div class="legend-dot" style="background:#FCD34D"></div>Unverified</div>
+              <div class="legend-num" id="lgPending">0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Export card -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Export</span></div>
+      <div class="card-body" style="padding:14px">
+        <button class="dl-row" id="dlCsv" onclick="downloadCSV()" disabled>
+          <div class="dl-left">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#64748B">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+            Download Valid &nbsp;<span style="color:#94A3B8;font-weight:400">.csv</span>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#94A3B8">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
+        <button class="dl-row" id="dlTxt" onclick="downloadTXT()" disabled>
+          <div class="dl-left">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#64748B">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+              <line x1="8" y1="13" x2="16" y2="13"/>
+            </svg>
+            Download Valid &nbsp;<span style="color:#94A3B8;font-weight:400">.txt</span>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#94A3B8">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
+        <p class="dl-hint">Only valid emails are exported</p>
+      </div>
+    </div>
+
+  </div><!-- /sidebar -->
+</div><!-- /container -->
+
+<script>
+// ── STATE ────────────────────────────────────────────────────────────────────
+let results   = [];   // {email, domain, formatOk, mxOk, status}
+let filtered  = [];
+let activeTab = 'upload';
+let fileText  = null;
+let filter    = 'all';
+let search    = '';
+let page      = 1;
+const PER_PAGE = 50;
+const mxCache  = new Map();
+
+// ── INPUT TABS ───────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('uploadPanel').style.display = tab === 'upload' ? '' : 'none';
+  document.getElementById('pastePanel').style.display  = tab === 'paste'  ? '' : 'none';
+  document.querySelectorAll('#inputTabs .tab').forEach((t, i) =>
+    t.classList.toggle('active', i === (tab === 'upload' ? 0 : 1)));
+}
+
+// ── FILE DRAG & DROP ─────────────────────────────────────────────────────────
+function onDragOver(e)  { e.preventDefault(); document.getElementById('dropZone').classList.add('dragover'); }
+function onDragLeave()  { document.getElementById('dropZone').classList.remove('dragover'); }
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.remove('dragover');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+}
+function handleFileSelect(inp) { if (inp.files[0]) loadFile(inp.files[0]); }
+
+async function loadFile(file) {
+  fileText = null;
+  const ext = file.name.split('.').pop().toLowerCase();
+  try {
+    if (ext === 'xlsx' || ext === 'xls') {
+      const buf = await file.arrayBuffer();
+      const wb  = XLSX.read(buf, { type: 'array' });
+      let text  = '';
+      wb.SheetNames.forEach(n => { text += XLSX.utils.sheet_to_csv(wb.Sheets[n]) + '\n'; });
+      fileText = text;
+    } else {
+      fileText = await file.text();
+    }
+    const kb = (file.size / 1024).toFixed(1);
+    document.getElementById('fileInfoText').textContent = `${file.name} (${kb} KB)`;
+    document.getElementById('fileInfo').style.display = 'flex';
+    hideAlert();
+  } catch(err) {
+    showAlert('Could not read file: ' + err.message);
+  }
+}
+function clearFile() {
+  fileText = null;
+  document.getElementById('fileInput').value = '';
+  document.getElementById('fileInfo').style.display = 'none';
+}
+
+// ── PASTE ────────────────────────────────────────────────────────────────────
+document.getElementById('pasteArea').addEventListener('input', function() {
+  document.getElementById('pasteCount').textContent = this.value.length.toLocaleString() + ' characters';
+});
+function clearPaste() {
+  document.getElementById('pasteArea').value = '';
+  document.getElementById('pasteCount').textContent = '0 characters';
+}
+
+// ── EMAIL LOGIC ──────────────────────────────────────────────────────────────
+function extractEmails(text) {
+  const raw = text.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
+  return [...new Set(raw.map(e => e.toLowerCase()))];
+}
+
+function validateFormat(email) {
+  if (email.length > 254) return false;
+  const [local, domain] = email.split('@');
+  if (!local || !domain) return false;
+  if (local.length > 64) return false;
+  if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
+  const re = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
+  return re.test(email);
+}
+
+async function checkMX(domain) {
+  if (mxCache.has(domain)) return mxCache.get(domain);
+  try {
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const res   = await fetch(
+      `https://dns.google/resolve?name=${encodeURIComponent(domain)}&type=MX`,
+      { signal: ctrl.signal }
+    );
+    clearTimeout(timer);
+    const data = await res.json();
+    const ok   = data.Status === 0 && Array.isArray(data.Answer) && data.Answer.length > 0;
+    mxCache.set(domain, ok);
+    return ok;
+  } catch {
+    mxCache.set(domain, null);
+    return null;
+  }
+}
+
+async function batchCheck(domains, onProg) {
+  const BATCH = 8;
+  const arr   = [...domains];
+  const map   = new Map();
+  for (let i = 0; i < arr.length; i += BATCH) {
+    const slice = arr.slice(i, i + BATCH);
+    const res   = await Promise.all(slice.map(checkMX));
+    slice.forEach((d, j) => map.set(d, res[j]));
+    onProg(Math.min(i + BATCH, arr.length), arr.length);
+  }
+  return map;
+}
+
+// ── MAIN FLOW ────────────────────────────────────────────────────────────────
+async function startValidation() {
+  const raw = activeTab === 'upload'
+    ? fileText
+    : document.getElementById('pasteArea').value;
+
+  if (!raw || !raw.trim()) {
+    showAlert('No input. Upload a file or paste text first.');
+    return;
+  }
+  hideAlert();
+  setBtn(true);
+  setProgress(true, 'Extracting emails…', 5);
+
+  await tick();
+  const emails = extractEmails(raw);
+
+  if (!emails.length) {
+    setProgress(false);
+    setBtn(false);
+    showAlert('No email addresses found in the input.');
+    return;
+  }
+
+  setProgress(true, `Validating format for ${emails.length} email${emails.length > 1 ? 's' : ''}…`, 20);
+  await tick();
+
+  const fmt        = emails.map(e => ({ email: e, domain: e.split('@')[1], formatOk: validateFormat(e) }));
+  const validFmt   = fmt.filter(r => r.formatOk);
+  const domains    = new Set(validFmt.map(r => r.domain));
+
+  setProgress(true, `Checking MX records for ${domains.size} domain${domains.size !== 1 ? 's' : ''}…`, 30);
+
+  const mxMap = await batchCheck(domains, (done, total) => {
+    const pct = 30 + Math.round((done / total) * 65);
+    setProgress(true, `MX check: ${done} / ${total} domains…`, pct);
+  });
+
+  setProgress(true, 'Building results…', 98);
+  await tick();
+
+  results = fmt.map(r => {
+    const mxOk  = r.formatOk ? (mxMap.get(r.domain) ?? null) : null;
+    const status = !r.formatOk ? 'invalid'
+                 : mxOk === true  ? 'valid'
+                 : mxOk === false ? 'invalid'
+                 : 'pending';
+    return { ...r, mxOk, status };
+  });
+
+  setProgress(false);
+  setBtn(false);
+
+  const vCount = results.filter(r => r.status === 'valid').length;
+  document.getElementById('dlCsv').disabled = vCount === 0;
+  document.getElementById('dlTxt').disabled = vCount === 0;
+
+  filter = 'all';
+  search = '';
+  page   = 1;
+  document.getElementById('searchInput').value = '';
+  document.querySelectorAll('#filterTabs .tab').forEach((t, i) => t.classList.toggle('active', i === 0));
+
+  document.getElementById('resultsCard').style.display = '';
+  applyFilter();
+  updateStats();
+  document.getElementById('resultsCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── FILTER / RENDER ──────────────────────────────────────────────────────────
+function setFilter(f) {
+  filter = f;
+  page   = 1;
+  const map = ['all','valid','invalid','pending'];
+  document.querySelectorAll('#filterTabs .tab').forEach((t, i) => t.classList.toggle('active', map[i] === f));
+  applyFilter();
+}
+
+function onSearch() {
+  search = document.getElementById('searchInput').value.toLowerCase();
+  page   = 1;
+  applyFilter();
+}
+
+function applyFilter() {
+  filtered = results.filter(r => {
+    if (filter !== 'all' && r.status !== filter) return false;
+    if (search && !r.email.includes(search) && !r.domain.includes(search)) return false;
+    return true;
+  });
+  renderTable();
+}
+
+function renderTable() {
+  const tbody  = document.getElementById('tableBody');
+  const start  = (page - 1) * PER_PAGE;
+  const slice  = filtered.slice(start, start + PER_PAGE);
+  const empty  = filtered.length === 0;
+
+  document.getElementById('mainTable').style.display  = empty ? 'none' : '';
+  document.getElementById('emptyState').style.display = empty ? '' : 'none';
+  document.getElementById('resultCount').textContent  =
+    filtered.length.toLocaleString() + ' email' + (filtered.length !== 1 ? 's' : '');
+
+  tbody.innerHTML = slice.map((r, i) => {
+    const n    = start + i + 1;
+    const fmt  = r.formatOk ? '<span class="check-icon">✓</span>' : '<span class="cross-icon">✗</span>';
+    const mx   = r.mxOk === true  ? '<span class="check-icon">✓</span>'
+               : r.mxOk === false ? '<span class="cross-icon">✗</span>'
+               : r.formatOk       ? '<span class="dash-icon" title="DNS timeout">?</span>'
+               : '<span class="dash-icon">—</span>';
+    const badge = r.status === 'valid'   ? '<span class="badge badge-valid"><span class="badge-dot"></span>Valid</span>'
+                : r.status === 'invalid' ? '<span class="badge badge-invalid"><span class="badge-dot"></span>Invalid</span>'
+                :                         '<span class="badge badge-pending"><span class="badge-dot"></span>Unverified</span>';
+    return `<tr>
+      <td style="color:#94A3B8;font-size:12px">${n}</td>
+      <td><div class="email-cell">${escHtml(r.email)}
+        <button class="copy-btn" title="Copy email" onclick="copyText('${escAttr(r.email)}')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+          </svg>
+        </button>
+      </div></td>
+      <td class="domain-cell">${escHtml(r.domain)}</td>
+      <td>${fmt}</td>
+      <td>${mx}</td>
+      <td>${badge}</td>
+      <td></td>
+    </tr>`;
+  }).join('');
+
+  renderPagination();
+}
+
+function renderPagination() {
+  const total = filtered.length;
+  const pages = Math.ceil(total / PER_PAGE);
+  const s     = (page - 1) * PER_PAGE + 1;
+  const e     = Math.min(page * PER_PAGE, total);
+
+  document.getElementById('pageInfo').textContent = total > 0 ? `${s}–${e} of ${total.toLocaleString()}` : '';
+
+  const btns = document.getElementById('pageBtns');
+  if (pages <= 1) { btns.innerHTML = ''; return; }
+
+  const lo = Math.max(1, page - 2);
+  const hi = Math.min(pages, page + 2);
+  let html = `<button class="page-btn" ${page === 1 ? 'disabled' : ''} onclick="goPage(${page-1})">‹</button>`;
+  for (let p = lo; p <= hi; p++)
+    html += `<button class="page-btn${p === page ? ' active' : ''}" onclick="goPage(${p})">${p}</button>`;
+  html += `<button class="page-btn" ${page === pages ? 'disabled' : ''} onclick="goPage(${page+1})">›</button>`;
+  btns.innerHTML = html;
+}
+
+function goPage(p) { page = p; renderTable(); }
+
+// ── STATS + DONUT ────────────────────────────────────────────────────────────
+function updateStats() {
+  const total   = results.length;
+  const valid   = results.filter(r => r.status === 'valid').length;
+  const invalid = results.filter(r => r.status === 'invalid').length;
+  const pending = results.filter(r => r.status === 'pending').length;
+
+  document.getElementById('sTotal').textContent   = total.toLocaleString();
+  document.getElementById('sValid').textContent   = valid.toLocaleString();
+  document.getElementById('sInvalid').textContent = invalid.toLocaleString();
+  document.getElementById('sPending').textContent = pending.toLocaleString();
+  document.getElementById('lgValid').textContent   = valid.toLocaleString();
+  document.getElementById('lgInvalid').textContent = invalid.toLocaleString();
+  document.getElementById('lgPending').textContent = pending.toLocaleString();
+
+  const pct = total > 0 ? Math.round(valid / total * 100) : 0;
+  document.getElementById('donutPct').textContent = pct + '%';
+  document.getElementById('donutSection').style.display = total > 0 ? 'flex' : 'none';
+
+  if (total > 0) {
+    const C    = 2 * Math.PI * 52; // circumference r=52
+    const vLen = (valid   / total) * C;
+    const iLen = (invalid / total) * C;
+    const pLen = (pending / total) * C;
+
+    const arcV = document.getElementById('arcValid');
+    const arcI = document.getElementById('arcInvalid');
+    const arcP = document.getElementById('arcPending');
+
+    // Valid arc starts at 0 (top after rotate(-90deg))
+    arcV.setAttribute('stroke-dasharray',  `${vLen} ${C - vLen}`);
+    arcV.setAttribute('stroke-dashoffset', '0');
+
+    // Invalid starts after valid
+    arcI.setAttribute('stroke-dasharray',  `${iLen} ${C - iLen}`);
+    arcI.setAttribute('stroke-dashoffset', `${C - vLen}`);
+
+    // Pending starts after valid + invalid
+    arcP.setAttribute('stroke-dasharray',  `${pLen} ${C - pLen}`);
+    arcP.setAttribute('stroke-dashoffset', `${Math.max(0, C - vLen - iLen)}`);
+  }
+}
+
+// ── DOWNLOAD ─────────────────────────────────────────────────────────────────
+function downloadCSV() {
+  const valid = results.filter(r => r.status === 'valid');
+  const csv   = 'Email,Domain,Status\n' + valid.map(r => `${r.email},${r.domain},valid`).join('\n');
+  triggerDownload('valid_emails.csv', csv, 'text/csv');
+}
+function downloadTXT() {
+  const valid = results.filter(r => r.status === 'valid');
+  triggerDownload('valid_emails.txt', valid.map(r => r.email).join('\n'), 'text/plain');
+}
+function triggerDownload(name, content, mime) {
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([content], { type: mime })),
+    download: name
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── UTILS ─────────────────────────────────────────────────────────────────────
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); } catch {}
+}
+function escHtml(s)  { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escAttr(s)  { return s.replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
+function tick()      { return new Promise(r => setTimeout(r, 16)); }
+
+function setBtn(disabled) {
+  document.getElementById('validateBtn').disabled = disabled;
+}
+function setProgress(show, text = '', pct = 0) {
+  document.getElementById('progressWrap').style.display = show ? '' : 'none';
+  if (show) {
+    document.getElementById('progressText').textContent = text;
+    document.getElementById('progressPct').textContent  = pct + '%';
+    document.getElementById('progressFill').style.width = pct + '%';
+  }
+}
+function showAlert(msg) {
+  const el = document.getElementById('alertEl');
+  document.getElementById('alertText').textContent = msg;
+  el.style.display = 'flex';
+}
+function hideAlert() { document.getElementById('alertEl').style.display = 'none'; }
+</script>
+</body>
+</html>
