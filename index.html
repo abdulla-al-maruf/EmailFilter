@@ -95,12 +95,50 @@
 
           <!-- Progress -->
           <div class="progress-wrap" id="progressWrap">
-            <div class="progress-meta">
-              <span id="progressText">Processing…</span>
-              <span id="progressPct">0%</span>
+
+            <!-- Step track -->
+            <div class="step-track">
+              <div class="pstep" id="ps1">
+                <div class="pstep-circle"><span class="pstep-n">1</span></div>
+                <span class="pstep-lbl">Extract</span>
+              </div>
+              <div class="pstep-line" id="pl1"></div>
+              <div class="pstep" id="ps2">
+                <div class="pstep-circle"><span class="pstep-n">2</span></div>
+                <span class="pstep-lbl">Format</span>
+              </div>
+              <div class="pstep-line" id="pl2"></div>
+              <div class="pstep" id="ps3">
+                <div class="pstep-circle"><span class="pstep-n">3</span></div>
+                <span class="pstep-lbl">DNS / MX</span>
+              </div>
+              <div class="pstep-line" id="pl3"></div>
+              <div class="pstep" id="ps4">
+                <div class="pstep-circle"><span class="pstep-n">✓</span></div>
+                <span class="pstep-lbl">Done</span>
+              </div>
             </div>
-            <div class="progress-track">
-              <div class="progress-fill" id="progressFill"></div>
+
+            <!-- Bar -->
+            <div class="pg-bar-row">
+              <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+              <span class="pg-pct" id="progressPct">0%</span>
+            </div>
+
+            <!-- Status text -->
+            <div class="pg-status" id="progressText">Starting…</div>
+
+            <!-- Live domain indicator -->
+            <div class="live-check" id="liveCheck">
+              <span class="live-pulse"></span>
+              <span id="liveText"></span>
+            </div>
+
+            <!-- Mini counts -->
+            <div class="mini-counts" id="miniCounts">
+              <span class="mc-item" id="mcFound"><span class="mc-dot gray-dot"></span><span>0 found</span></span>
+              <span class="mc-item" id="mcValid"><span class="mc-dot green-dot"></span><span>0 valid</span></span>
+              <span class="mc-item" id="mcInvalid"><span class="mc-dot red-dot"></span><span>0 invalid</span></span>
             </div>
           </div>
 
@@ -245,6 +283,7 @@
             <th>Format</th>
             <th>MX Record</th>
             <th>Status</th>
+            <th>Reason</th>
             <th></th>
           </tr>
         </thead>

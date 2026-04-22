@@ -352,19 +352,81 @@ body {
 }
 
 /* ── PROGRESS ────────────────────────────────────────────────────────────── */
-.progress-wrap { display: none; margin-top: 20px; }
-.progress-meta {
+.progress-wrap { display: none; margin-top: 22px; }
+
+/* Steps */
+.step-track {
   display: flex;
-  justify-content: space-between;
-  font-size: 12.5px;
-  color: var(--gray-500);
-  margin-bottom: 8px;
-  font-weight: 500;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.pstep {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.pstep-circle {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--gray-100);
+  border: 2px solid var(--gray-200);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .3s;
+}
+.pstep-n {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gray-400);
+  transition: color .3s;
+}
+.pstep-lbl {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--gray-400);
+  white-space: nowrap;
+  transition: color .3s;
+}
+.pstep.active .pstep-circle {
+  background: #EFF6FF;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+}
+.pstep.active .pstep-n  { color: var(--blue); }
+.pstep.active .pstep-lbl { color: var(--blue); }
+.pstep.done .pstep-circle {
+  background: #F0FDF4;
+  border-color: #16A34A;
+}
+.pstep.done .pstep-n  { color: #16A34A; }
+.pstep.done .pstep-lbl { color: #16A34A; }
+
+.pstep-line {
+  flex: 1;
+  height: 2px;
+  background: var(--gray-200);
+  margin: 0 6px;
+  margin-bottom: 23px;
+  border-radius: 99px;
+  transition: background .4s;
+}
+.pstep-line.done { background: #16A34A; }
+
+/* Bar */
+.pg-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 .progress-track {
+  flex: 1;
   background: var(--gray-100);
   border-radius: 99px;
-  height: 7px;
+  height: 8px;
   overflow: hidden;
 }
 .progress-fill {
@@ -373,13 +435,77 @@ body {
   animation: shimmer 1.8s linear infinite;
   height: 100%;
   border-radius: 99px;
-  transition: width .4s ease;
+  transition: width .35s ease;
   width: 0%;
 }
 @keyframes shimmer {
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+.pg-pct {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--blue);
+  min-width: 36px;
+  text-align: right;
+}
+
+/* Status text */
+.pg-status {
+  font-size: 13px;
+  color: var(--gray-500);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+/* Live domain indicator */
+.live-check {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--gray-500);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: 8px;
+  padding: 7px 12px;
+  margin-bottom: 10px;
+}
+.live-pulse {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--blue);
+  flex-shrink: 0;
+  animation: livepulse 1s ease-in-out infinite;
+}
+@keyframes livepulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: .4; transform: scale(.75); }
+}
+
+/* Mini counts */
+.mini-counts {
+  display: none;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.mc-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--gray-700);
+}
+.mc-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.gray-dot  { background: #94A3B8; }
+.green-dot { background: #34D399; }
+.red-dot   { background: #FCA5A5; }
 
 /* ── ALERT ───────────────────────────────────────────────────────────────── */
 .alert {
@@ -580,6 +706,15 @@ tr:hover td { background: #FAFBFF; }
 .chk { color: #16A34A; font-weight: 700; font-size: 15px; }
 .crs { color: #DC2626; font-weight: 700; font-size: 15px; }
 .dsh { color: #CBD5E1; }
+
+.reason-cell {
+  font-size: 12px;
+  color: var(--gray-400);
+  white-space: nowrap;
+}
+.reason-valid   { color: #16A34A; }
+.reason-invalid { color: #DC2626; }
+.reason-pending { color: #D97706; }
 
 /* ── PAGINATION ──────────────────────────────────────────────────────────── */
 .pagination {

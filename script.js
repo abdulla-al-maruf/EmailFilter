@@ -1,7 +1,7 @@
 // ── STATE ─────────────────────────────────────────────────────────────────
 const state = {
   files:    [],   // [{name, size, text}]
-  results:  [],   // [{email, domain, formatOk, mxOk, status}]
+  results:  [],   // [{email, domain, formatOk, mxOk, status, reason}]
   filtered: [],
   filter:   'all',
   search:   '',
@@ -28,10 +28,7 @@ function onDrop(e) {
   document.getElementById('dropZone').classList.remove('dragover');
   [...e.dataTransfer.files].forEach(loadFile);
 }
-function handleFileSelect(inp) {
-  [...inp.files].forEach(loadFile);
-  inp.value = '';
-}
+function handleFileSelect(inp) { [...inp.files].forEach(loadFile); inp.value = ''; }
 
 async function loadFile(file) {
   if (state.files.find(f => f.name === file.name && f.size === file.size)) return;
@@ -60,7 +57,6 @@ function removeFile(idx) {
 
 function renderFileChips() {
   const wrap = document.getElementById('fileChips');
-  if (!state.files.length) { wrap.innerHTML = ''; return; }
   wrap.innerHTML = state.files.map((f, i) => `
     <div class="file-chip">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -68,7 +64,7 @@ function renderFileChips() {
       </svg>
       ${escHtml(f.name)}
       <span class="chip-size">(${(f.size / 1024).toFixed(1)} KB)</span>
-      <button class="chip-remove" onclick="removeFile(${i})" title="Remove file">✕</button>
+      <button class="chip-remove" onclick="removeFile(${i})" title="Remove">✕</button>
     </div>
   `).join('');
 }
@@ -89,18 +85,21 @@ function extractEmails(text) {
   return [...new Set(raw.map(e => e.toLowerCase()))];
 }
 
-// ── FORMAT VALIDATION ─────────────────────────────────────────────────────
+// ── FORMAT VALIDATION (with specific reasons) ─────────────────────────────
 function validateFormat(email) {
-  if (email.length > 254) return false;
+  if (email.length > 254)      return { ok: false, reason: 'Email too long' };
   const at = email.lastIndexOf('@');
-  if (at < 1) return false;
+  if (at < 1)                  return { ok: false, reason: 'Missing @ symbol' };
   const local  = email.slice(0, at);
   const domain = email.slice(at + 1);
-  if (local.length > 64) return false;
-  if (local.startsWith('.') || local.endsWith('.') || local.includes('..')) return false;
-  if (!domain.includes('.')) return false;
+  if (local.length > 64)       return { ok: false, reason: 'Local part too long' };
+  if (local.startsWith('.'))   return { ok: false, reason: 'Starts with a dot' };
+  if (local.endsWith('.'))     return { ok: false, reason: 'Ends with a dot' };
+  if (local.includes('..'))    return { ok: false, reason: 'Double dot in address' };
+  if (!domain.includes('.'))   return { ok: false, reason: 'Invalid domain' };
   const re = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
-  return re.test(email);
+  if (!re.test(email))         return { ok: false, reason: 'Invalid format' };
+  return { ok: true, reason: '' };
 }
 
 // ── DNS / MX CHECK ────────────────────────────────────────────────────────
@@ -130,9 +129,13 @@ async function batchCheck(domains, onProg) {
   const map   = new Map();
   for (let i = 0; i < arr.length; i += BATCH) {
     const slice = arr.slice(i, i + BATCH);
-    const res   = await Promise.all(slice.map(checkMX));
+    // Show first domain in batch as "currently checking"
+    onProg(i, arr.length, slice[0]);
+    await raf();
+    const res = await Promise.all(slice.map(checkMX));
     slice.forEach((d, j) => map.set(d, res[j]));
-    onProg(Math.min(i + BATCH, arr.length), arr.length);
+    onProg(Math.min(i + BATCH, arr.length), arr.length, slice[slice.length - 1]);
+    await raf();
   }
   return map;
 }
@@ -150,58 +153,110 @@ async function startValidation() {
 
   hideAlert();
   setBtn(true);
-  setProgress(true, 'Extracting emails…', 5);
-  await tick();
+  showProgress();
+  setStep(1);
+  setPct(5, 'Scanning text for email addresses…');
+  await raf();
 
+  // ── Step 1: Extract
   const emails = extractEmails(raw);
   if (!emails.length) {
-    setProgress(false); setBtn(false);
+    hideProgress(); setBtn(false);
     showAlert('No email addresses found in the input.');
     return;
   }
+  setMini(emails.length, 0, 0);
+  setPct(18, `Found ${emails.length.toLocaleString()} email${emails.length > 1 ? 's' : ''}. Checking format…`);
+  setStep(2);
+  await raf();
 
-  setProgress(true, `Validating format for ${emails.length.toLocaleString()} email${emails.length > 1 ? 's' : ''}…`, 20);
-  await tick();
+  // ── Step 2: Format validation
+  const fmt = [];
+  for (let i = 0; i < emails.length; i++) {
+    const e   = emails[i];
+    const res = validateFormat(e);
+    fmt.push({ email: e, domain: e.split('@')[1], formatOk: res.ok, fmtReason: res.reason });
+    if (i % 50 === 0 || i === emails.length - 1) {
+      const pct = 18 + Math.round((i / emails.length) * 12);
+      setPct(pct, `Format check: ${(i + 1).toLocaleString()} / ${emails.length.toLocaleString()}`);
+      await raf();
+    }
+  }
 
-  const fmt     = emails.map(e => ({ email: e, domain: e.split('@')[1], formatOk: validateFormat(e) }));
+  const formatInvalid = fmt.filter(r => !r.formatOk).length;
+  setMini(emails.length, 0, formatInvalid);
+  await raf();
+
+  // ── Step 3: DNS / MX check
   const domains = new Set(fmt.filter(r => r.formatOk).map(r => r.domain));
+  setStep(3);
+  setLive('Starting DNS lookup…');
+  setPct(30, `Checking MX records for ${domains.size} domain${domains.size !== 1 ? 's' : ''}…`);
+  await raf();
 
-  setProgress(true, `Checking MX records for ${domains.size} domain${domains.size !== 1 ? 's' : ''}…`, 30);
+  const mxMap = await batchCheck(domains, (done, total, domain) => {
+    const pct = 30 + Math.round((done / total) * 62);
+    setPct(pct, `DNS / MX check: ${done} / ${total} domains`);
+    setLive(`Checking: ${domain}`);
 
-  const mxMap = await batchCheck(domains, (done, total) => {
-    const pct = 30 + Math.round((done / total) * 65);
-    setProgress(true, `MX check: ${done} / ${total} domains…`, pct);
+    // Running valid/invalid count using cache so far
+    let v = 0, inv = formatInvalid;
+    for (const [d, ok] of mxCache) {
+      const count = fmt.filter(r => r.domain === d).length;
+      if (ok === true)  v   += count;
+      if (ok === false) inv += count;
+    }
+    setMini(emails.length, v, inv);
   });
 
-  setProgress(true, 'Building results…', 98);
-  await tick();
+  setLive(null);
+  setPct(96, 'Building results…');
+  setStep(4);
+  await raf();
 
+  // ── Build results with reasons
   state.results = fmt.map(r => {
-    const mxOk  = r.formatOk ? (mxMap.get(r.domain) ?? null) : null;
-    const status = !r.formatOk    ? 'invalid'
-                 : mxOk === true  ? 'valid'
-                 : mxOk === false ? 'invalid'
-                 :                  'pending';
-    return { ...r, mxOk, status };
+    const mxOk = r.formatOk ? (mxMap.get(r.domain) ?? null) : null;
+    let status, reason;
+
+    if (!r.formatOk) {
+      status = 'invalid';
+      reason = r.fmtReason;
+    } else if (mxOk === true) {
+      status = 'valid';
+      reason = 'Mail server verified';
+    } else if (mxOk === false) {
+      status = 'invalid';
+      reason = 'No mail server found';
+    } else {
+      status = 'pending';
+      reason = 'DNS check timed out';
+    }
+    return { email: r.email, domain: r.domain, formatOk: r.formatOk, mxOk, status, reason };
   });
 
-  setProgress(false);
-  setBtn(false);
+  setPct(100, 'Done!');
+  await raf();
 
-  const vc = state.results.filter(r => r.status === 'valid').length;
-  document.getElementById('dlCsv').disabled = vc === 0;
-  document.getElementById('dlTxt').disabled = vc === 0;
+  setTimeout(() => {
+    hideProgress();
+    setBtn(false);
 
-  state.filter = 'all';
-  state.search = '';
-  state.page   = 1;
-  document.getElementById('searchInput').value = '';
-  document.querySelectorAll('#filterTabs .tab').forEach((t, i) => t.classList.toggle('active', i === 0));
+    const vc = state.results.filter(r => r.status === 'valid').length;
+    document.getElementById('dlCsv').disabled = vc === 0;
+    document.getElementById('dlTxt').disabled = vc === 0;
 
-  document.getElementById('resultsCard').style.display = '';
-  applyFilter();
-  updateStats();
-  document.getElementById('resultsCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    state.filter = 'all';
+    state.search = '';
+    state.page   = 1;
+    document.getElementById('searchInput').value = '';
+    document.querySelectorAll('#filterTabs .tab').forEach((t, i) => t.classList.toggle('active', i === 0));
+
+    document.getElementById('resultsCard').style.display = '';
+    applyFilter();
+    updateStats();
+    document.getElementById('resultsCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 600);
 }
 
 // ── FILTER / SEARCH ───────────────────────────────────────────────────────
@@ -213,13 +268,11 @@ function setFilter(f) {
     t.classList.toggle('active', keys[i] === f));
   applyFilter();
 }
-
 function onSearch() {
   state.search = document.getElementById('searchInput').value.toLowerCase();
   state.page   = 1;
   applyFilter();
 }
-
 function applyFilter() {
   state.filtered = state.results.filter(r => {
     if (state.filter !== 'all' && r.status !== state.filter) return false;
@@ -242,19 +295,18 @@ function renderTable() {
     state.filtered.length.toLocaleString() + ' email' + (state.filtered.length !== 1 ? 's' : '');
 
   tbody.innerHTML = slice.map((r, i) => {
-    const n     = start + i + 1;
-    const fmt   = r.formatOk
-      ? '<span class="chk">✓</span>'
-      : '<span class="crs">✗</span>';
-    const mx    = r.mxOk === true  ? '<span class="chk">✓</span>'
-                : r.mxOk === false ? '<span class="crs">✗</span>'
-                : r.formatOk       ? '<span class="dsh" title="DNS timeout">?</span>'
-                :                    '<span class="dsh">—</span>';
+    const n    = start + i + 1;
+    const fmt  = r.formatOk ? '<span class="chk">✓</span>' : '<span class="crs">✗</span>';
+    const mx   = r.mxOk === true  ? '<span class="chk">✓</span>'
+               : r.mxOk === false ? '<span class="crs">✗</span>'
+               : r.formatOk       ? '<span class="dsh" title="DNS timeout">?</span>'
+               :                    '<span class="dsh">—</span>';
     const badge = r.status === 'valid'
       ? `<span class="badge badge-valid"><span class="badge-dot"></span>Valid</span>`
       : r.status === 'invalid'
       ? `<span class="badge badge-invalid"><span class="badge-dot"></span>Invalid</span>`
       : `<span class="badge badge-pending"><span class="badge-dot"></span>Unverified</span>`;
+    const reasonClass = `reason-${r.status}`;
 
     return `<tr>
       <td style="color:#CBD5E1;font-size:12px">${n}</td>
@@ -269,6 +321,7 @@ function renderTable() {
       <td>${fmt}</td>
       <td>${mx}</td>
       <td>${badge}</td>
+      <td class="reason-cell ${reasonClass}">${escHtml(r.reason)}</td>
       <td></td>
     </tr>`;
   }).join('');
@@ -281,13 +334,9 @@ function renderPagination() {
   const pages = Math.ceil(total / PER_PAGE);
   const s     = (state.page - 1) * PER_PAGE + 1;
   const e     = Math.min(state.page * PER_PAGE, total);
-
-  document.getElementById('pageInfo').textContent =
-    total > 0 ? `${s}–${e} of ${total.toLocaleString()}` : '';
-
+  document.getElementById('pageInfo').textContent = total > 0 ? `${s}–${e} of ${total.toLocaleString()}` : '';
   const btns = document.getElementById('pageBtns');
   if (pages <= 1) { btns.innerHTML = ''; return; }
-
   const lo = Math.max(1, state.page - 2);
   const hi = Math.min(pages, state.page + 2);
   let html = `<button class="page-btn" ${state.page === 1 ? 'disabled' : ''} onclick="goPage(${state.page - 1})">‹</button>`;
@@ -296,10 +345,9 @@ function renderPagination() {
   html += `<button class="page-btn" ${state.page === pages ? 'disabled' : ''} onclick="goPage(${state.page + 1})">›</button>`;
   btns.innerHTML = html;
 }
-
 function goPage(p) { state.page = p; renderTable(); }
 
-// ── STATS + DONUT CHART ───────────────────────────────────────────────────
+// ── STATS + DONUT ─────────────────────────────────────────────────────────
 function updateStats() {
   const total   = state.results.length;
   const valid   = state.results.filter(r => r.status === 'valid').length;
@@ -319,22 +367,17 @@ function updateStats() {
   document.getElementById('donutSection').style.display = total > 0 ? 'flex' : 'none';
 
   if (total > 0) {
-    // r=56, C = 2*π*56 ≈ 351.86
     const C    = 2 * Math.PI * 56;
     const vLen = (valid   / total) * C;
     const iLen = (invalid / total) * C;
     const pLen = (pending / total) * C;
-
     const av = document.getElementById('arcValid');
     const ai = document.getElementById('arcInvalid');
     const ap = document.getElementById('arcPending');
-
     av.setAttribute('stroke-dasharray',  `${vLen} ${C - vLen}`);
     av.setAttribute('stroke-dashoffset', '0');
-
     ai.setAttribute('stroke-dasharray',  `${iLen} ${C - iLen}`);
     ai.setAttribute('stroke-dashoffset', `${C - vLen}`);
-
     ap.setAttribute('stroke-dasharray',  `${pLen} ${C - pLen}`);
     ap.setAttribute('stroke-dashoffset', `${Math.max(0, C - vLen - iLen)}`);
   }
@@ -343,9 +386,7 @@ function updateStats() {
 // ── DOWNLOAD ──────────────────────────────────────────────────────────────
 function downloadCSV() {
   const valid = state.results.filter(r => r.status === 'valid');
-  dl('valid_emails.csv',
-     'Email,Domain\n' + valid.map(r => `${r.email},${r.domain}`).join('\n'),
-     'text/csv');
+  dl('valid_emails.csv', 'Email,Domain\n' + valid.map(r => `${r.email},${r.domain}`).join('\n'), 'text/csv');
 }
 function downloadTXT() {
   const valid = state.results.filter(r => r.status === 'valid');
@@ -353,38 +394,58 @@ function downloadTXT() {
 }
 function dl(name, content, mime) {
   const a = Object.assign(document.createElement('a'), {
-    href:     URL.createObjectURL(new Blob([content], { type: mime })),
-    download: name,
+    href: URL.createObjectURL(new Blob([content], { type: mime })), download: name,
   });
-  a.click();
-  URL.revokeObjectURL(a.href);
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ── PROGRESS HELPERS ──────────────────────────────────────────────────────
+function showProgress() {
+  document.getElementById('progressWrap').style.display = '';
+  document.getElementById('miniCounts').style.display   = 'none';
+  document.getElementById('liveCheck').style.display    = 'none';
+  setPct(0, '');
+  setStep(0);
+}
+function hideProgress() {
+  document.getElementById('progressWrap').style.display = 'none';
+}
+function setStep(n) {
+  for (let i = 1; i <= 4; i++) {
+    const el = document.getElementById('ps' + i);
+    if (!el) continue;
+    el.className = 'pstep' + (i < n ? ' done' : i === n ? ' active' : '');
+  }
+  for (let i = 1; i <= 3; i++) {
+    const ln = document.getElementById('pl' + i);
+    if (ln) ln.className = 'pstep-line' + (i < n ? ' done' : '');
+  }
+}
+function setPct(pct, text) {
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressPct').textContent  = pct + '%';
+  if (text) document.getElementById('progressText').textContent = text;
+}
+function setLive(text) {
+  const el = document.getElementById('liveCheck');
+  if (text) { el.style.display = 'flex'; document.getElementById('liveText').textContent = text; }
+  else      { el.style.display = 'none'; }
+}
+function setMini(found, valid, invalid) {
+  document.getElementById('miniCounts').style.display = 'flex';
+  document.getElementById('mcFound').innerHTML   = `<span class="mc-dot gray-dot"></span><span>${found.toLocaleString()} found</span>`;
+  document.getElementById('mcValid').innerHTML   = `<span class="mc-dot green-dot"></span><span>${valid.toLocaleString()} valid</span>`;
+  document.getElementById('mcInvalid').innerHTML = `<span class="mc-dot red-dot"></span><span>${invalid.toLocaleString()} invalid</span>`;
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────
-async function copyText(t) {
-  try { await navigator.clipboard.writeText(t); } catch {}
-}
-function escHtml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-function escAttr(s) {
-  return s.replace(/'/g, '&#39;').replace(/"/g, '&quot;');
-}
-function tick()       { return new Promise(r => setTimeout(r, 16)); }
-function setBtn(dis)  { document.getElementById('validateBtn').disabled = dis; }
-
-function setProgress(show, text = '', pct = 0) {
-  document.getElementById('progressWrap').style.display = show ? '' : 'none';
-  if (show) {
-    document.getElementById('progressText').textContent = text;
-    document.getElementById('progressPct').textContent  = pct + '%';
-    document.getElementById('progressFill').style.width = pct + '%';
-  }
-}
+async function copyText(t) { try { await navigator.clipboard.writeText(t); } catch {} }
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escAttr(s) { return s.replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
+function raf()      { return new Promise(resolve => requestAnimationFrame(resolve)); }
+function setBtn(d)  { document.getElementById('validateBtn').disabled = d; }
 function showAlert(msg) {
   document.getElementById('alertText').textContent = msg;
   document.getElementById('alertEl').style.display = 'flex';
 }
-function hideAlert() {
-  document.getElementById('alertEl').style.display = 'none';
-}
+function hideAlert() { document.getElementById('alertEl').style.display = 'none'; }
