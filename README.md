@@ -1,3 +1,4 @@
+<img width="1536" height="1024" alt="ChatGPT Image Apr 22, 2026, 01_48_03 PM" src="https://github.com/user-attachments/assets/517af995-1326-40a0-bb81-cfd2a5ff6c1a" />
 # EmailFilter — Free Online Email Validator & Extractor Tool
 
 **Extract valid email addresses from any messy text, CSV, or Excel file instantly — with real DNS/MX verification. No installation. No signup. 100% free.**
