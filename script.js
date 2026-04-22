@@ -428,6 +428,11 @@ async function startValidation() {
     document.getElementById('section-results').style.display = '';
     setTimeout(function() { navClick('results'); }, 120);
 
+    /* hide progress after 2s */
+    setTimeout(function() {
+      document.getElementById('progressWrap').style.display = 'none';
+    }, 2000);
+
     saveHistory({
       total: raw.length, valid: nValid, invalid: nInvalid,
       pending: nPending, date: new Date().toISOString()
