@@ -6,6 +6,17 @@
 
 ---
 
+
+
+
+<img width="1536" height="1024" alt="ChatGPT Image Apr 22, 2026, 01_48_03 PM" src="https://github.com/user-attachments/assets/dc72a1ca-c21f-4e9e-9fd1-9a3c65d1931e" />
+
+
+
+
+
+
+
 ## What is EmailFilter?
 
 EmailFilter is a free, browser-based email validation tool that helps you clean up messy email lists in seconds. Whether you have a text file full of random content, a CSV export from a CRM, or an Excel sheet with thousands of rows — EmailFilter automatically finds every email address, validates the format, and checks whether the domain actually exists using live DNS lookups.
